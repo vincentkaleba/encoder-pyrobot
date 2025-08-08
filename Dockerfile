@@ -1,43 +1,31 @@
-# Use Ubuntu 20.04 base
+# Import Ubuntu
 FROM ubuntu:20.04
 
-# Set environment variables
-ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Asia/Kolkata \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Kolkata
 
-# Configure timezone and create non-root user
-RUN ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends tzdata && \
-    rm -rf /var/lib/apt/lists/* && \
-    useradd -r -s /bin/bash -U appuser
-
-# Create application directory
+# Créer le dossier de travail
+RUN mkdir /app && chmod 777 /app
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Copier les fichiers de l'application
+COPY . .
+
+# Installer les dépendances système
+RUN apt update && apt install -y --no-install-recommends \
     git wget curl busybox python3 python3-pip \
     p7zip-full p7zip-rar unzip mkvtoolnix ffmpeg \
+    build-essential python3-dev libxml2-dev libxslt1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
+# Installer les dépendances Python
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY --chown=appuser:appuser . .
+# Rendre le script extract exécutable
+RUN chmod +x extract
 
-# Set permissions and switch user
-RUN chmod +x extract && \
-    chown -R appuser:appuser /app
-USER appuser
-
-# Expose application port
+# Exposer le port
 EXPOSE 8080
 
-# Set entrypoint
+# Commande de démarrage
 CMD ["bash", "run.sh"]
