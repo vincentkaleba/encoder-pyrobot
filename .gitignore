@@ -17,7 +17,7 @@ env.bak/
 venv.bak/
 
 # Pyrogram / Telethon / Telegram sessions
-sessions/
+
 *.session
 
 # Distribution / packaging
