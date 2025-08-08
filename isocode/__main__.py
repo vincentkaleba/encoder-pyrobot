@@ -10,11 +10,13 @@ from isocode.plugins.cmd import sudo as sudo_flt
 from isocode.plugins.cmd import admin as admin_flt
 from isocode.utils.isoutils.dbutils import initialize_database, get_auth_chat
 from isocode.utils.isoutils.queue import queue_system, shutdown_queue_system
+from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
 from pyrogram.enums import ParseMode
 from pyrogram.handlers import MessageHandler
 from isocode import settings, logger
 from isocode.utils.telegram.message import send_log
+from aiohttp import web
 
 log_chats = settings.LOG_CHANNELS if isinstance(settings.LOG_CHANNELS, list) else settings.LOG_CHANNELS.split(" ") if settings.LOG_CHANNELS else []
 
@@ -95,7 +97,11 @@ async def main():
     user_me = await user_client.get_me()
     logger.info(f"Userbot démarré: {user_me.first_name} ({user_me.id})")
     await initialize_database()
+
     await set_bot_commands(botclient)
+    apps = web.AppRunner(await web_server())
+    await apps.setup()
+    await web.TCPSite(apps, "0.0.0.0", 8080).start()
 
     # Handlers avec nouveau filtre pour groupes authentifiés
     botclient.add_handler(

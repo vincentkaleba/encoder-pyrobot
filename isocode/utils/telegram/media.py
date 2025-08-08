@@ -25,6 +25,7 @@ import time
 import tempfile
 from isocode.utils.isoutils.ffmpeg import (
     encode_video,
+    get_ffmpeg_video_width_and_height,
     get_thumbnail,
     get_duration,
     get_video_width_and_height,
@@ -157,7 +158,9 @@ async def _upload_media_single(
             try:
                 duration = await get_duration(file_path)
                 width, height = await get_video_width_and_height(file_path)
-                print(f"width : {width} - hegth : {height}")
+                if width == 0 or height == 0:
+                    width, height = await get_ffmpeg_video_width_and_height(file_path)
+                
             except Exception as e:
                 logger.error(f"Erreur métadonnées vidéo: {e}")
 

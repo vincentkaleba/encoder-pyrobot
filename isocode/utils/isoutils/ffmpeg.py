@@ -621,3 +621,28 @@ async def get_video_width_and_height(filepath: str) -> Tuple[int, int]:
     except Exception as e:
         logger.error(f"Width/Height detection error: {str(e)}")
         return 0, 0
+
+async def get_ffmpeg_video_width_and_height(filepath: str) -> Tuple[int, int]:
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0:s=x",
+            filepath
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode == 0:
+            dims = stdout.decode().strip()
+            if dims:
+                width, height = dims.split('x')
+                return int(width), int(height)
+        return 0, 0
+    except Exception as e:
+        logger.error(f"Width/Height detection error: {str(e)}")
+        return 0, 0
