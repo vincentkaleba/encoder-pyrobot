@@ -145,8 +145,7 @@ async def main():
             )
             logger.info(f"Message de démarrage envoyé à {chat}")
     except Exception as e:
-        logger.error(f"Erreur lors de l'envoi du message de démarrage: {e}")
-        return
+        pass
 
     shutdown_event = asyncio.Event()
 
