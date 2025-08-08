@@ -12,8 +12,7 @@ python-dotenv==1.0.1
 
 cloudinary==1.43.0
 cloudscraper==1.2.71
-Flask==2.3.2
-Flask-Cors==5.0.0
+
 hachoir==3.3.0
 ffmpeg-python==0.2.0
 colorlog==6.9.0
