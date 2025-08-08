@@ -14,5 +14,6 @@ cloudinary==1.43.0
 cloudscraper==1.2.71
 
 hachoir==3.3.0
+psutil
 ffmpeg-python==0.2.0
 colorlog==6.9.0
