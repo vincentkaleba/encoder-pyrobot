@@ -127,25 +127,25 @@ async def main():
         )
     )
 
-    for chat_id in log_chats:
-        try:
-            await user_client.get_chat(int(chat_id))
-        except Exception as e:
-            logger.warning(f"Impossible de résoudre le chat {chat_id} : {e}")
+    # for chat_id in log_chats:
+    #     try:
+    #         await user_client.get_chat(int(chat_id))
+    #     except Exception as e:
+    #         logger.warning(f"Impossible de résoudre le chat {chat_id} : {e}")
 
-    try:
-        for chat in log_chats:
-            await send_log(
-                user_client,
-                text=f"**Bot Version V.{settings.ISOCODE_VERSION}**\n\n"
-                     f"Bot: {mebot.first_name} ({mebot.id})\n"
-                     f"Userbot: {user_me.first_name} ({user_me.id})",
-                level="INFO",
-                parse=ParseMode.MARKDOWN
-            )
-            logger.info(f"Message de démarrage envoyé à {chat}")
-    except Exception as e:
-        pass
+    # try:
+    #     for chat in log_chats:
+    #         await send_log(
+    #             user_client,
+    #             text=f"**Bot Version V.{settings.ISOCODE_VERSION}**\n\n"
+    #                  f"Bot: {mebot.first_name} ({mebot.id})\n"
+    #                  f"Userbot: {user_me.first_name} ({user_me.id})",
+    #             level="INFO",
+    #             parse=ParseMode.MARKDOWN
+    #         )
+    #         logger.info(f"Message de démarrage envoyé à {chat}")
+    # except Exception as e:
+    #     pass
 
     shutdown_event = asyncio.Event()
 
