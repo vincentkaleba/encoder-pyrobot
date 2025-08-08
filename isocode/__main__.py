@@ -129,14 +129,14 @@ async def main():
 
     for chat_id in log_chats:
         try:
-            await botclient.get_chat(int(chat_id))
+            await user_client.get_chat(int(chat_id))
         except Exception as e:
             logger.warning(f"Impossible de résoudre le chat {chat_id} : {e}")
 
     try:
         for chat in log_chats:
             await send_log(
-                botclient,
+                user_client,
                 text=f"**Bot Version V.{settings.ISOCODE_VERSION}**\n\n"
                      f"Bot: {mebot.first_name} ({mebot.id})\n"
                      f"Userbot: {user_me.first_name} ({user_me.id})",
