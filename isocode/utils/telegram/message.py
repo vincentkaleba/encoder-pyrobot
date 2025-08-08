@@ -218,7 +218,8 @@ async def send_log(
     """
     from datetime import datetime
 
-    log_chats = settings.LOG_CHANNEL.split(" ") if settings.LOG_CHANNEL else []
+    log_chats = settings.LOG_CHANNELS if isinstance(settings.LOG_CHANNELS, list) else settings.LOG_CHANNELS.split(" ") if settings.LOG_CHANNELS else []
+
 
     if not log_chats:
         logger.warning("Aucun canal de log configuré!")

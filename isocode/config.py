@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # DATABASE
     MONGODB_URI: str
-    
+
 
     # DIRECTORIES & URLS
     DRIVE_DIR: str = ""
@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # AUTO DELETE
     AUTODELETE_MESSAGES: bool = False
     AUTODELETE_MESSAGES_TIMEOUT: int = 3600
+    START_TIME: Optional[float] = None
 
     # FILE UPLOAD SETTINGS
     TG_SPLIT_SIZE: int = 2 # in GB
@@ -61,6 +62,6 @@ class Settings(BaseSettings):
     ISO_CODE: str = "fr"
 
     class Config:
-        env_file = "config.env"
+        env_file = ".env"
 
 settings = Settings()

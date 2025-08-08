@@ -71,6 +71,7 @@ class ClientManager:
             api_id=settings.API_ID,
             api_hash=settings.API_HASH,
             workdir=settings.SESSION_DIR,
+            bot_token=settings.BOT_TOKEN if client_type == "clientbot" else None,
             **kwargs
         )
 
