@@ -754,5 +754,3 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
         await callback_query.answer(
             "❌ Erreur lors du traitement de la demande", show_alert=True
         )
-
-    await callback_query.answer()
