@@ -316,7 +316,7 @@ async def show_setting(callback_query: CallbackQuery):
     kbs = create_inline_kb(
         [
             # Section Vidéo
-            [(" ↓↓ ᴘᴀʀᴀᴍᴇᴛʀᴇs ᴠɪᴅᴇᴏ ↓↓ ", "none_btn")],
+            [(" ↓↓ ᴘᴀʀᴀᴍᴇᴛʀᴇs �ᴠɪᴅᴇᴏ ↓↓ ", "none_btn")],
             [
                 (
                     f"ᴄᴏᴅᴇᴄ: {stylize_value(settings_dict['video_codec'])}",
@@ -427,6 +427,13 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
     query_data = callback_query.data
     message = callback_query.message
     user_id = callback_query.from_user.id
+
+    # Répondre IMMÉDIATEMENT à la callback query
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass  # Ignore si déjà répondue ou expirée
+
     if not await if_user_exist(user_id):
         await add_user(user_id)
         logger.info(f"Nouvel utilisateur enregistré: {user_id}")
@@ -438,8 +445,8 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             if message.reply_to_message:
                 try:
                     await message.reply_to_message.delete()
-                except Exception as e:
-                    logger.warning(f"Failed to delete replied-to message: {e}")
+                except Exception:
+                    pass
             return
 
         elif query_data == "help":
@@ -500,8 +507,10 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             await show_setting(callback_query)
 
         elif query_data == "none_btn":
-            await callback_query.answer(
-                "Aucune action définie pour ce bouton", show_alert=True
+            # Utiliser un message d'alerte édité au lieu de callback_query.answer()
+            await callback_query.message.edit_text(
+                "Aucune action définie pour ce bouton",
+                reply_markup=callback_query.message.reply_markup
             )
 
         elif query_data.startswith("adjust_"):
@@ -535,8 +544,10 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
         elif query_data.startswith("s_"):
             parts = query_data.split("_", 2)
             if len(parts) < 3:
-                await callback_query.answer(
-                    "Format de commande invalide", show_alert=True
+                # Utiliser un message d'erreur édité au lieu de callback_query.answer()
+                await callback_query.message.edit_text(
+                    "Format de commande invalide",
+                    reply_markup=callback_query.message.reply_markup
                 )
                 return
 
@@ -549,9 +560,9 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                 available_accels = await get_available_hwaccels()
                 if value not in available_accels:
                     value = "none"
-                    await callback_query.answer(
+                    await callback_query.message.edit_text(
                         f"⚠️ Accélérateur '{value}' non disponible! Réglé sur 'none'.",
-                        show_alert=True
+                        reply_markup=callback_query.message.reply_markup
                     )
 
             # Conversion spéciale pour les valeurs numériques
@@ -559,15 +570,13 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                 try:
                     value = int(value)
                 except ValueError:
-                    await callback_query.answer(
-                        "Valeur numérique invalide", show_alert=True
+                    await callback_query.message.edit_text(
+                        "Valeur numérique invalide",
+                        reply_markup=callback_query.message.reply_markup
                     )
                     return
 
             await set_setting(user_id, setting_name, value)
-            await callback_query.answer(
-                f"✅ Paramètre mis à jour: {setting_name} = {value}"
-            )
             await show_setting(callback_query)
             return
 
@@ -588,9 +597,6 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             )
             new_value = not current_value
             await set_setting(user_id, db_field, new_value)
-
-            status = "activé" if new_value else "désactivé"
-            await callback_query.answer(f"✅ {setting_name.capitalize()} {status}")
             await show_setting(callback_query)
             return
 
@@ -635,10 +641,12 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                     new_value = options[0]
 
                 await set_setting(user_id, setting_name, new_value)
-                await callback_query.answer(f"✅ {setting_name} = {new_value}")
                 await show_setting(callback_query)
             else:
-                await callback_query.answer("Paramètre non configuré", show_alert=True)
+                await callback_query.message.edit_text(
+                    "Paramètre non configuré",
+                    reply_markup=callback_query.message.reply_markup
+                )
 
         # Actions spéciales pour les paramètres complexes
         elif query_data == "setpix_fmt":
@@ -743,13 +751,19 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             return
 
         else:
-            await callback_query.answer(
-                "❌ Action non reconnue ou non implémentée", show_alert=True
+            await callback_query.message.edit_text(
+                "❌ Action non reconnue ou non implémentée",
+                reply_markup=callback_query.message.reply_markup
             )
             return
 
     except Exception as e:
         logger.error(f"Callback error: {e}", exc_info=True)
-        await callback_query.answer(
-            "❌ Erreur lors du traitement de la demande", show_alert=True
-        )
+        try:
+            # Utiliser un message d'erreur édité au lieu de callback_query.answer()
+            await callback_query.message.edit_text(
+                "❌ Erreur lors du traitement de la demande",
+                reply_markup=callback_query.message.reply_markup
+            )
+        except Exception:
+            pass
