@@ -25,6 +25,7 @@ from isocode.utils.isoutils.dbutils import (
     set_admin_status,
     set_auth_chat,
     total_users_count,
+    get_or_create_user
 )
 import time
 import psutil
@@ -115,9 +116,11 @@ async def handle_bot_commands(client: Client, message: Message):
         logger.warning("Message sans utilisateur identifié, commande ignorée.")
         return
 
-    if not await if_user_exist(user_id):
-        await add_user(user_id)
-        logger.info(f"Nouvel utilisateur enregistré: {user_id}")
+    user = await get_or_create_user(user_id)
+    if user is None:
+        logger.error(f"Impossible de récupérer ou créer l'utilisateur {user_id}")
+        await message.reply_text("Une erreur est survenue lors de votre enregistrement.")
+        return
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # COMMANDE START

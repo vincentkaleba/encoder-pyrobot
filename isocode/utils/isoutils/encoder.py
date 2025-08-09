@@ -147,6 +147,21 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
 
         return None
 
+    try:
+        parts = os.path.basename(file_path).split('_')
+
+        if len(parts) >= 3:
+            original_filename = '_'.join(parts[2:])
+            new_path = os.path.join(os.path.dirname(file_path), original_filename)
+
+            os.rename(file_path, new_path)
+            file_path = new_path
+            logger.info(f"Fichier renommé : {original_filename}")
+        else:
+            logger.warning("Impossible de renommer le fichier : format de nom invalide")
+    except Exception as e:
+        logger.error(f"Erreur lors du renommage du fichier : {e}")
+
     file_size = humanbytes(os.path.getsize(file_path))
     elapsed = time.time() - progress_tracker.start_time
     await edit_msg(
@@ -155,7 +170,7 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
         msg.id,
         stylize_value(
             f"✅ **Téléchargement réussi!**\n\n"
-            f"📁 `{filename}`\n"
+            f"📁 `{os.path.basename(file_path)}`\n"  # Utiliser le nouveau nom
             f"📦 Taille: {file_size}\n"
             f"⏱ Durée: {math.floor(elapsed)}s\n\n"
             f"⏳ Ajout à la file d'encodage..."
@@ -181,7 +196,7 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
         msg.id,
         stylize_value(
             f"📥 **Vidéo ajoutée à la file d'attente**\n\n"
-            f"📁 `{filename}`\n"
+            f"📁 `{os.path.basename(file_path)}`\n"  
             f"📦 Taille: {file_size}\n"
             f"🎬 Position: #{pos}\n"
             f"🔍 Suivre: /status_{task_id}"

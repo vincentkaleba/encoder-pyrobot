@@ -429,10 +429,6 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
 
     # Répondre IMMÉDIATEMENT à la callback query
-    try:
-        await callback_query.answer()
-    except Exception:
-        pass  # Ignore si déjà répondue ou expirée
 
     if not await if_user_exist(user_id):
         await add_user(user_id)
