@@ -19,6 +19,11 @@ class ClientManager:
 
     async def initialize(self):
         """Initialisation asynchrone des clients"""
+        if not os.path.exists(settings.SESSION_DIR):
+            os.makedirs(settings.SESSION_DIR, exist_ok=True)
+            logger.info(f"Dossier de sessions créé: {settings.SESSION_DIR}")
+        else:
+            logger.info(f"Dossier de sessions déjà existant: {settings.SESSION_DIR}")
         await self._create_clientbot()
         if settings.USERBOT_ENABLED:
             await self._create_userbot()

@@ -88,12 +88,6 @@ auth_group_flt = filters.create(auth_group_filter)
 
 async def main():
     """Fonction principale asynchrone"""
-    required_dirs = [
-        "./session",
-        "./log",
-    ]
-    for d in required_dirs:
-        os.makedirs(d, exist_ok=True)
     logger.info("Démarrage de l'application IsoCode...")
     settings.START_TIME = time.time()
     await initialize_clients()
