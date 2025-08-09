@@ -28,4 +28,4 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 EXPOSE 8080
 
 # Commande de démarrage
-CMD ["bash", "run.sh"]
+CMD ["python3 -m isocode"]
