@@ -22,7 +22,7 @@ RUN apt update && apt install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Rendre le script extract exécutable
-RUN chmod +x extract
+# RUN chmod +x extract
 
 # Exposer le port
 EXPOSE 8080
