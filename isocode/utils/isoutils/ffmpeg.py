@@ -277,12 +277,12 @@ class FFmpegCommandBuilder:
         if audio_track_action != AudioTrackAction.NONE and has_audio:
             # Audio mapping
             if audio_track_action == AudioTrackAction.ALL:
-                cmd.extend(['-map', '0:a'])
+                cmd.extend(['-map', '0:a?'])
             elif audio_track_action == AudioTrackAction.FIRST:
-                cmd.extend(['-map', '0:a:0'])
+                cmd.extend(['-map', '0:a:0?'])
             else:
                 track_num = int(audio_track_action.value.split('_')[1])
-                cmd.extend(['-map', f'0:a:{track_num - 1}'])
+                cmd.extend(['-map', f'0:a:{track_num - 1}?'])
 
             # Audio codec
             if audio_codec != AudioCodec.COPY:
@@ -343,7 +343,7 @@ class FFmpegCommandBuilder:
                     cmd.extend(['-vf', vf])
             else:
                 # Embed ou copy: mapper la piste spécifique
-                cmd.extend(['-map', f'0:{selected_global_idx}'])
+                cmd.extend(['-map', f'0:{selected_global_idx}?'])
 
                 if subtitle_action == SubtitleAction.EMBED:
                     cmd.extend(['-c:s', 'mov_text'])
