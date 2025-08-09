@@ -6,7 +6,7 @@ pydantic-settings==2.7.1
 pydantic==2.9.2
 python-jose==3.4.0
 motor==3.6.1
-Pyrogram==2.0.106
+Pyrogram
 pyromod==3.1.6
 python-dotenv==1.0.1
 
