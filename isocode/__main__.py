@@ -4,7 +4,7 @@ import signal
 import time
 from pyrogram import Client, filters
 from pyrogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
-from isocode.plugins.data import handle_callback_query
+from isocode.plugins.data import handle_callback_query, hw_accel_checker
 from isocode.plugins.video_hander import handle_video
 from isocode.plugins.cmd import user as user_flt
 from isocode.plugins.cmd import sudo as sudo_flt
@@ -104,6 +104,7 @@ async def main():
     apps = web.AppRunner(await web_server())
     await apps.setup()
     await web.TCPSite(apps, "0.0.0.0", 8080).start()
+    hw_accel_checker.check_all()
 
     # Handlers avec nouveau filtre pour groupes authentifiés
     botclient.add_handler(

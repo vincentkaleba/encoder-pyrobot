@@ -137,94 +137,105 @@ SETTING_NAME_MAP = {
     "subs_track": "selected_subtitle_track",
 }
 
-# Cache pour la disponibilité des accélérateurs matériels
-_available_hwaccels = None
+# ==================== Classe de vérification matérielle ====================
+class HardwareAcceleratorChecker:
+    """Classe pour vérifier et gérer les accélérateurs matériels disponibles"""
+    _instance = None
+    available_accels = None
 
-# ==================== Fonctions de vérification matérielle ====================
-def check_cuda_available() -> bool:
-    """Vérifie physiquement la présence d'un GPU NVIDIA avec CUDA"""
-    try:
-        # Vérifie l'existence du périphérique NVIDIA
-        if os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl"):
-            # Vérifie que le driver fonctionne
-            result = subprocess.run(
-                ["nvidia-smi", "-L"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            return "GPU" in result.stdout
-        return False
-    except Exception:
-        return False
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            # Initialisation unique au premier appel
+            cls._instance.available_accels = None
+        return cls._instance
 
-def check_vaapi_available() -> bool:
-    """Vérifie physiquement la présence d'un périphérique VA-API"""
-    try:
-        # Liste les périphériques de rendu
-        render_devices = [
-            f for f in os.listdir("/dev/dri")
-            if f.startswith("renderD")
-        ]
-        if not render_devices:
+    def check_cuda_available(self) -> bool:
+        """Vérifie physiquement la présence d'un GPU NVIDIA avec CUDA"""
+        try:
+            if os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl"):
+                result = subprocess.run(
+                    ["nvidia-smi", "-L"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                return "GPU" in result.stdout
+            return False
+        except Exception:
             return False
 
-        # Vérifie les permissions sur le premier périphérique
-        device = f"/dev/dri/{render_devices[0]}"
-        return os.access(device, os.R_OK | os.W_OK)
-    except Exception:
-        return False
+    def check_vaapi_available(self) -> bool:
+        """Vérifie physiquement la présence d'un périphérique VA-API"""
+        try:
+            render_devices = [
+                f for f in os.listdir("/dev/dri")
+                if f.startswith("renderD")
+            ]
+            if not render_devices:
+                return False
 
-def check_qsv_available() -> bool:
-    """Vérifie physiquement la présence d'un périphérique Intel Quick Sync"""
-    try:
-        # Vérifie les périphériques Intel
-        card_devices = [
-            f for f in os.listdir("/dev/dri")
-            if f.startswith("card")
-        ]
-        if not card_devices:
+            device = f"/dev/dri/{render_devices[0]}"
+            return os.access(device, os.R_OK | os.W_OK)
+        except Exception:
             return False
 
-        # Vérifie les permissions sur le premier périphérique
-        device = f"/dev/dri/{card_devices[0]}"
-        return os.access(device, os.R_OK | os.W_OK)
-    except Exception:
-        return False
+    def check_qsv_available(self) -> bool:
+        """Vérifie physiquement la présence d'un périphérique Intel Quick Sync"""
+        try:
+            card_devices = [
+                f for f in os.listdir("/dev/dri")
+                if f.startswith("card")
+            ]
+            if not card_devices:
+                return False
 
-def check_dxva2_available() -> bool:
-    """Vérifie si DXVA2 est disponible (Windows uniquement)"""
-    try:
-        return os.name == "nt"
-    except Exception:
-        return False
+            device = f"/dev/dri/{card_devices[0]}"
+            return os.access(device, os.R_OK | os.W_OK)
+        except Exception:
+            return False
 
-async def get_available_hwaccels() -> list:
-    """Récupère la liste des accélérateurs matériels réellement disponibles"""
-    global _available_hwaccels
+    def check_dxva2_available(self) -> bool:
+        """Vérifie si DXVA2 est disponible (Windows uniquement)"""
+        try:
+            return os.name == "nt"
+        except Exception:
+            return False
 
-    if _available_hwaccels is not None:
-        return _available_hwaccels
+    def check_all(self):
+        """Effectue toutes les vérifications matérielles une seule fois"""
+        if self.available_accels is not None:
+            return self.available_accels
 
-    # Toujours disponibles
-    available = {"none", "auto"}
+        # Toujours disponibles
+        available = {"none", "auto"}
 
-    # Vérifications matérielles
-    if check_cuda_available():
-        available.add("cuda")
-    if check_vaapi_available():
-        available.add("vaapi")
-    if check_qsv_available():
-        available.add("qsv")
-    if check_dxva2_available():
-        available.add("dxva2")
+        # Vérifications matérielles
+        if self.check_cuda_available():
+            available.add("cuda")
+        if self.check_vaapi_available():
+            available.add("vaapi")
+        if self.check_qsv_available():
+            available.add("qsv")
+        if self.check_dxva2_available():
+            available.add("dxva2")
 
-    # Filtre et ordonne les options valides
-    valid_hwaccels = ["none", "auto", "cuda", "vaapi", "dxva2", "qsv"]
-    _available_hwaccels = [accel for accel in valid_hwaccels if accel in available]
+        # Filtre et ordonne les options valides
+        valid_hwaccels = ["none", "auto", "cuda", "vaapi", "dxva2", "qsv"]
+        self.available_accels = [accel for accel in valid_hwaccels if accel in available]
 
-    logger.info(f"Accélérateurs matériels détectés: {_available_hwaccels}")
-    return _available_hwaccels
+        logger.info(f"Accélérateurs matériels détectés: {self.available_accels}")
+        return self.available_accels
+
+    def get_available(self) -> list:
+        """Retourne la liste des accélérateurs disponibles (sans re-vérifier)"""
+        if self.available_accels is None:
+            return self.check_all()
+        return self.available_accels
+
+# Initialisation globale du vérificateur matériel
+hw_accel_checker = HardwareAcceleratorChecker()
+
 
 # ==================== Fonctions utilitaires ====================
 async def get_current_settings(user_id: int) -> dict:
@@ -261,7 +272,7 @@ async def get_current_settings(user_id: int) -> dict:
     }
 
     # Vérifier et corriger hwaccel si nécessaire
-    available_accels = await get_available_hwaccels()
+    available_accels = hw_accel_checker.get_available()
     current_hwaccel = settings_dict["hwaccel"]
 
     if current_hwaccel not in available_accels:
@@ -429,6 +440,10 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
 
     # Répondre IMMÉDIATEMENT à la callback query
+    try:
+        await callback_query.answer()
+    except Exception:
+        pass  # Ignore si déjà répondue ou expirée
 
     if not await if_user_exist(user_id):
         await add_user(user_id)
@@ -553,7 +568,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
 
             # Vérification spéciale pour hwaccel
             if setting_name == "hwaccel":
-                available_accels = await get_available_hwaccels()
+                available_accels = hw_accel_checker.get_available()
                 if value not in available_accels:
                     value = "none"
                     await callback_query.message.edit_text(
@@ -599,7 +614,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
         # Gestion spéciale pour hwaccel
         elif query_data == "set_hwaccel":
             current = await get_hwaccel(user_id)
-            available = await get_available_hwaccels()
+            available = hw_accel_checker.get_available()
             kb = create_adjustment_kb("hwaccel", available, current)
 
             # Créer le texte informatif
@@ -756,7 +771,6 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
     except Exception as e:
         logger.error(f"Callback error: {e}", exc_info=True)
         try:
-            # Utiliser un message d'erreur édité au lieu de callback_query.answer()
             await callback_query.message.edit_text(
                 "❌ Erreur lors du traitement de la demande",
                 reply_markup=callback_query.message.reply_markup
