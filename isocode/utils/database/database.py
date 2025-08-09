@@ -409,7 +409,6 @@ class MediaMetadata(BaseModel):
 # ==================== Modèle Utilisateur ====================
 
 class User(BaseModel):
-    id: Optional[PyObjectId] = Field(alias="_id", default=None)
     user_id: int
     username: Optional[str] = None
     first_name: Optional[str] = None
@@ -537,22 +536,16 @@ class Database:
         user_data = await self.users.find_one({"user_id": user_id})
         if not user_data:
             new_user = User(user_id=user_id)
-
-            user_dict = new_user.dict(by_alias=True, exclude={"id"})
-            result = await self.users.insert_one(user_dict)
-
-            new_user.id = result.inserted_id
+            await self.users.insert_one(new_user.dict(by_alias=True))
             return new_user
         return User(**user_data)
 
     async def update_user(self, user: User) -> bool:
         user.last_activity = datetime.utcnow()
 
-        update_data = user.dict(by_alias=True, exclude={"id"})
-
         result = await self.users.update_one(
             {"user_id": user.user_id},
-            {"$set": update_data}
+            {"$set": user.dict(by_alias=True, exclude={"id"})}
         )
         return result.modified_count > 0
 
