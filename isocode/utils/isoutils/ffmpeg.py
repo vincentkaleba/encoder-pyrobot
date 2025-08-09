@@ -541,7 +541,7 @@ async def handle_progress(proc, msg, message, filepath, user_settings: dict):
 
         bar_len = 10
         filled_len = int(bar_len * percentage / 100)
-        progress_bar = '━' * filled_len + '─' * (bar_len - filled_len)
+        progress_bar = '▬' * filled_len + '─' * (bar_len - filled_len)
 
         speed_str = f"{speed:.1f}x" if speed is not None else "N/A"
         remaining_str = format_duration(remaining_time) if remaining_time and remaining_time > 0 else "Calcul..."

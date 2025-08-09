@@ -52,7 +52,7 @@ class DownloadProgress:
 
         bar_len = 10
         filled_len = int(bar_len * percent / 100)
-        progress_bar = '━' * filled_len + '─' * (bar_len - filled_len)
+        progress_bar = '▬' * filled_len + '─' * (bar_len - filled_len)
 
         filename_display = self.filename if len(self.filename) <= 20 else f"{self.filename[:10]}...{self.filename[-10:]}"
 
