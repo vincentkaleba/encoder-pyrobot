@@ -4,6 +4,7 @@ import signal
 import time
 from pyrogram import Client, filters
 from pyrogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+from isocode.plugins.data import handle_callback_query
 from isocode.plugins.video_hander import handle_video
 from isocode.plugins.cmd import user as user_flt
 from isocode.plugins.cmd import sudo as sudo_flt
@@ -13,7 +14,8 @@ from isocode.utils.isoutils.queue import queue_system, shutdown_queue_system
 from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
 from pyrogram.enums import ParseMode
-from pyrogram.handlers import MessageHandler
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.types import CallbackQuery
 from isocode import settings, logger
 from isocode.utils.telegram.message import send_log
 from aiohttp import web
@@ -126,7 +128,7 @@ async def main():
             filters.group & (filters.video | filters.document) & user_flt
         )
     )
-
+    botclient.add_handler(CallbackQueryHandler(handle_callback_query))
     # for chat_id in log_chats:
     #     try:
     #         await user_client.get_chat(int(chat_id))

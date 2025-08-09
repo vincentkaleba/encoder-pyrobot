@@ -422,7 +422,6 @@ async def show_setting(callback_query: CallbackQuery):
         text, reply_markup=kbs, parse_mode=ParseMode.MARKDOWN
     )
 
-@Client.on_callback_query()
 async def handle_callback_query(client: Client, callback_query: CallbackQuery):
     """Handle callback queries from inline keyboards."""
     query_data = callback_query.data
