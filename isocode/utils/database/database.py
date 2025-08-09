@@ -537,16 +537,22 @@ class Database:
         user_data = await self.users.find_one({"user_id": user_id})
         if not user_data:
             new_user = User(user_id=user_id)
-            await self.users.insert_one(new_user.dict(by_alias=True))
+
+            user_dict = new_user.dict(by_alias=True, exclude={"id"})
+            result = await self.users.insert_one(user_dict)
+
+            new_user.id = result.inserted_id
             return new_user
         return User(**user_data)
 
     async def update_user(self, user: User) -> bool:
         user.last_activity = datetime.utcnow()
 
+        update_data = user.dict(by_alias=True, exclude={"id"})
+
         result = await self.users.update_one(
             {"user_id": user.user_id},
-            {"$set": user.dict(by_alias=True, exclude={"id"})}
+            {"$set": update_data}
         )
         return result.modified_count > 0
 
