@@ -1,27 +1,39 @@
-FROM python:3.11-slim
+# Utiliser Ubuntu 20.04 comme base
+FROM ubuntu:20.04
 
+# Configuration de l'environnement
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
+ENV PYTHONUNBUFFERED=1
 
-# Met à jour et installe les dépendances système nécessaires
-RUN apt update && apt install -y --no-install-recommends \
-    git wget curl busybox python3 python3-pip \
-    p7zip-full p7zip-rar unzip mkvtoolnix ffmpeg \
-    build-essential python3-dev libxml2-dev libxslt1-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Crée le dossier de travail
-RUN mkdir /app
+# Créer le dossier de travail
+RUN mkdir /app && chmod 777 /app
 WORKDIR /app
 
-# Copie tous les fichiers de ton projet
+# Installer les dépendances système et Python 3.10
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa -y && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    git wget curl busybox python3.10 python3.10-dev python3.10-distutils \
+    p7zip-full p7zip-rar unzip mkvtoolnix ffmpeg \
+    build-essential libxml2-dev libxslt1-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Installer pip pour Python 3.10
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+
+# Copier les fichiers de l'application (fait après l'installation des dépendances pour mieux utiliser le cache Docker)
 COPY . .
 
-# Installe les dépendances Python via pip
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Installer les dépendances Python
+RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
 
-# Expose le port 8080
+# Rendre le script extract exécutable
+# RUN chmod +x extract
+
+# Exposer le port
 EXPOSE 8080
 
-# Démarre l’application
-CMD ["python3", "-m", "isocode"]
+# Commande de démarrage
+CMD ["python3.10", "-m", "isocode"]
