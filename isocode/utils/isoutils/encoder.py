@@ -9,7 +9,7 @@ from isocode.utils.isoutils.dbutils import get_or_create_user
 from isocode.utils.isoutils.progress import stylize_value, humanbytes
 from isocode.utils.telegram.media import download_media
 from isocode.utils.telegram.message import send_msg, edit_msg
-from isocode.utils.isoutils.queue import queue_system
+from isocode.utils.isoutils import queue
 from isocode.utils.isoutils.ffmpeg import get_user_settings
 from isocode import logger, download_dir
 
@@ -228,8 +228,8 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
         'userbot': userbot
     }
 
-    task_id = await queue_system.add_task(task_data)
-    pos = await queue_system.get_task_position(task_id)
+    task_id = await queue.queue_system.add_task(task_data)
+    pos = await queue.queue_system.get_task_position(task_id)
 
     await edit_msg(
         client,
