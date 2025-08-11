@@ -26,48 +26,54 @@ class EncodingTask:
 
 class EncodingQueue:
     def __init__(self, max_concurrent: int = 1):
-        # structure principale
         self.queue: Deque[EncodingTask] = deque()
         self.active_tasks: Dict[str, EncodingTask] = {}
         self.running_tasks: Dict[str, asyncio.Task] = {}
-
         self.max_concurrent = max(max_concurrent, 1)
         self.task_counter = 0
-
-        # Condition utilisée pour synchroniser et notifier
-        # (créée quand l'objet est instancié — assure-toi d'instancier l'objet
-        # après que l'event loop soit créé)
         self.queue_notifier = asyncio.Condition()
-
         self._stop_event = asyncio.Event()
         self._queue_processor: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         if self._queue_processor is None or self._queue_processor.done():
             self._stop_event.clear()
-            # créer la tâche sur la loop courante
-            self._queue_processor = asyncio.create_task(self._process_queue(), name="QueueProcessor")
+            self._queue_processor = asyncio.create_task(
+                self._process_queue(),
+                name="QueueProcessor"
+            )
 
     async def stop(self, cancel_active: bool = False) -> None:
-        # demande d'arrêt
+        # Demande d'arrêt et réveil du processeur
         self._stop_event.set()
 
+        # Réveille toutes les tâches en attente
+        async with self.queue_notifier:
+            self.queue_notifier.notify_all()
+
+        # Annule les tâches actives si demandé
         if cancel_active:
-            # annule les tâches en cours
             async with self.queue_notifier:
                 for task_id, t in list(self.running_tasks.items()):
                     t.cancel()
 
-            # attendre que les tasks se terminent proprement
+            # Attend que les tâches se terminent
             for t in list(self.running_tasks.values()):
                 try:
-                    await t
-                except (asyncio.CancelledError, Exception):
+                    await asyncio.wait_for(t, timeout=5.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                     pass
 
-        # attendre l'arrêt du processeur de file
+        # Attend l'arrêt du processeur de file
         if self._queue_processor and not self._queue_processor.done():
-            await self._queue_processor
+            try:
+                await asyncio.wait_for(self._queue_processor, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                self._queue_processor.cancel()
+                try:
+                    await self._queue_processor
+                except asyncio.CancelledError:
+                    pass
 
     async def add_task(self, task_data: Dict[str, Any]) -> str:
         async with self.queue_notifier:
@@ -82,62 +88,64 @@ class EncodingQueue:
 
             self.queue.append(task)
             logger.info(f"Nouvelle tâche ajoutée: {task_id} | Position: {len(self.queue)}")
-
-            # notifier le processor
             self.queue_notifier.notify_all()
-
             return task_id
 
     async def _process_queue(self) -> None:
         logger.info("Démarrage du processeur de file d'attente")
         try:
             while not self._stop_event.is_set():
+                tasks_to_start: List[EncodingTask] = []
 
-                while not self._stop_event.is_set():
-                    tasks_to_start: List[EncodingTask] = []
+                async with self.queue_notifier:
+                    # Vérifier si on doit s'arrêter avant de continuer
+                    if self._stop_event.is_set():
+                        break
 
-                    # construire la liste des tâches à démarrer en atomique
+                    available_slots = self.max_concurrent - len(self.running_tasks)
+                    for _ in range(min(available_slots, len(self.queue))):
+                        tasks_to_start.append(self.queue.popleft())
+
+                    # Mettre à jour les positions des tâches restantes
+                    for idx, queued_task in enumerate(self.queue):
+                        queued_task.position = idx + 1
+
+                # Démarrer les tâches extraites
+                for task in tasks_to_start:
+                    task.status = "PROCESSING"
+                    task.start_time = time.time()
+                    task_obj = asyncio.create_task(
+                        self._execute_task(task),
+                        name=task.id
+                    )
+
                     async with self.queue_notifier:
-                        available_slots = self.max_concurrent - len(self.running_tasks)
-                        # popleft en toute sécurité
-                        for _ in range(min(available_slots, len(self.queue))):
-                            tasks_to_start.append(self.queue.popleft())
+                        self.active_tasks[task.id] = task
+                        self.running_tasks[task.id] = task_obj
 
-                        # mettre à jour les positions
-                        for idx, queued_task in enumerate(self.queue):
-                            queued_task.position = idx + 1
+                    logger.info(f"Tâche démarrée: {task.id}")
 
-                    # démarrer les tâches hors de la section critique (mais après les avoir extraites)
-                    for task in tasks_to_start:
-                        task.status = "PROCESSING"
-                        task.start_time = time.time()
-
-                        task_obj = asyncio.create_task(self._execute_task(task), name=task.id)
-
-                        async with self.queue_notifier:
-                            self.active_tasks[task.id] = task
-                            self.running_tasks[task.id] = task_obj
-
-                        logger.info(f"Tâche démarrée: {task.id}")
-
-                    try:
-                        async with self.queue_notifier:
-                            timeout = 5.0 if not self.queue else 0.1
-                            await asyncio.wait_for(self.queue_notifier.wait(), timeout=timeout)
-                    except asyncio.TimeoutError:
-                        pass
-                    except asyncio.CancelledError:
-                        logger.info("Traitement de file annulé")
-                        raise
-                    except Exception as e:
-                        logger.exception(f"Erreur dans _process_queue wait: {e}")
+                try:
+                    async with self.queue_notifier:
+                        if self._stop_event.is_set():
+                            break
+                        await asyncio.wait_for(
+                            self.queue_notifier.wait(),
+                            timeout=0.5
+                        )
+                except asyncio.TimeoutError:
+                    pass
+                except asyncio.CancelledError:
+                    logger.info("Traitement de file annulé")
+                    raise
 
         except asyncio.CancelledError:
-            logger.info("Processeur de file arrêté")
+            logger.info("Processeur de file arrêté (annulé)")
             raise
+        except Exception as e:
+            logger.exception(f"Erreur inattendue dans _process_queue: {e}")
         finally:
             logger.info("Arrêt du processeur de file d'attente")
-
 
     async def _execute_task(self, task: EncodingTask) -> None:
         task_id = task.id
@@ -170,13 +178,17 @@ class EncodingQueue:
             await self._notify_failure(task)
 
         finally:
-            await self._cleanup_files(task)
+            try:
+                await self._cleanup_files(task)
+            except Exception as e:
+                logger.error(f"Erreur lors du nettoyage des fichiers: {e}")
 
-            # nettoyage des structures partagées et notification
+            # Nettoyage des structures partagées
             async with self.queue_notifier:
-                self.running_tasks.pop(task_id, None)
-                self.active_tasks.pop(task_id, None)
-                # notifier le processor qu'un slot est libéré
+                if task_id in self.running_tasks:
+                    del self.running_tasks[task_id]
+                if task_id in self.active_tasks:
+                    del self.active_tasks[task_id]
                 self.queue_notifier.notify_all()
 
     async def _send_encoded_video(self, task: EncodingTask) -> None:
@@ -190,7 +202,6 @@ class EncodingQueue:
 
             await edit_msg(client, message.chat.id, status_msg.id, "📤 Envoi de la vidéo encodée...")
 
-            # lancer l'envoi sans bloquer
             asyncio.create_task(
                 send_media(
                     client=client,
@@ -214,8 +225,10 @@ class EncodingQueue:
         try:
             client = task.data['client']
             message = task.data['message']
-            asyncio.create_task(send_msg(client, message.chat.id, f"❌ Tâche d'encodage annulée: {task.id}", reply_to=message.id),
-                                 name=f"notify-cancel-{task.id}")
+            asyncio.create_task(
+                send_msg(client, message.chat.id, f"❌ Tâche d'encodage annulée: {task.id}", reply_to=message.id),
+                name=f"notify-cancel-{task.id}"
+            )
         except Exception as e:
             logger.error(f"Erreur de notification d'annulation: {e}")
 
@@ -223,25 +236,35 @@ class EncodingQueue:
         try:
             client = task.data['client']
             message = task.data['message']
-            asyncio.create_task(send_msg(client, message.chat.id,
-                                         f"❌ Échec de l'encodage: {task.error}\nID Tâche: {task.id}",
-                                         reply_to=message.id),
-                                 name=f"notify-fail-{task.id}")
+            asyncio.create_task(
+                send_msg(client, message.chat.id,
+                         f"❌ Échec de l'encodage: {task.error}\nID Tâche: {task.id}",
+                         reply_to=message.id),
+                name=f"notify-fail-{task.id}"
+            )
         except Exception as e:
             logger.error(f"Erreur de notification d'échec: {e}")
 
     async def _cleanup_files(self, task: EncodingTask) -> None:
         try:
-            if os.path.exists(task.data.get('filepath') or ""):
+            # Supprimer le fichier source
+            source_file = task.data.get('filepath')
+            if source_file and os.path.exists(source_file):
                 try:
-                    os.remove(task.data['filepath'])
-                except Exception:
-                    pass
+                    os.remove(source_file)
+                    logger.info(f"Fichier source supprimé: {source_file}")
+                except Exception as e:
+                    logger.error(f"Échec de suppression du fichier source: {source_file} - {e}")
 
-            if task.output_file and os.path.exists(task.output_file):
-                asyncio.create_task(self._delayed_cleanup(task.output_file), name=f"cleanup-{task.id}")
+            # Planifier la suppression du fichier de sortie
+            output_file = task.output_file
+            if output_file and os.path.exists(output_file):
+                asyncio.create_task(
+                    self._delayed_cleanup(output_file),
+                    name=f"cleanup-{task.id}"
+                )
         except Exception as e:
-            logger.error(f"Erreur de nettoyage des fichiers: {e}")
+            logger.error(f"Erreur générale de nettoyage: {e}")
 
     async def _delayed_cleanup(self, file_path: str, delay: int = 3600) -> None:
         await asyncio.sleep(delay)
@@ -252,7 +275,7 @@ class EncodingQueue:
         except Exception as e:
             logger.error(f"Échec de suppression de {file_path}: {e}")
 
-    # --- informations / contrôles ---
+    # --- méthodes d'information ---
     async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         async with self.queue_notifier:
             if task_id in self.active_tasks:
@@ -287,15 +310,6 @@ class EncodingQueue:
             'error': task.error
         }
 
-    async def get_task_position(self, task_id: str) -> int:
-        async with self.queue_notifier:
-            for idx, task in enumerate(self.queue):
-                if task.id == task_id:
-                    return idx + 1
-            if task_id in self.active_tasks:
-                return 0
-            return -1
-
     def _format_queued_info(self, task: EncodingTask) -> Dict[str, Any]:
         return {
             'id': task.id,
@@ -304,6 +318,15 @@ class EncodingQueue:
             'file': os.path.basename(task.data.get('filepath') or ""),
             'status': task.status
         }
+
+    async def get_task_position(self, task_id: str) -> int:
+        async with self.queue_notifier:
+            for idx, task in enumerate(self.queue):
+                if task.id == task_id:
+                    return idx + 1
+            if task_id in self.active_tasks:
+                return 0
+            return -1
 
     async def notify_progress(self, task_id: str, progress: float) -> bool:
         async with self.queue_notifier:
@@ -314,21 +337,23 @@ class EncodingQueue:
 
     async def cancel_task(self, task_id: str) -> bool:
         async with self.queue_notifier:
+            # Tâche en cours d'exécution
             if task_id in self.running_tasks:
-                # annuler la tâche asyncio
                 self.running_tasks[task_id].cancel()
                 return True
-            # supprimer de la queue
+
+            # Tâche dans la file d'attente
             for idx, task in enumerate(self.queue):
                 if task.id == task_id:
                     self.queue.remove(task)
-                    # reindexer positions
-                    for i, t in enumerate(list(self.queue)[idx:]):
-                        t.position = idx + i + 1
+                    # Réindexer les positions
+                    for i, t in enumerate(self.queue):
+                        t.position = i + 1
                     self.queue_notifier.notify_all()
                     return True
             return False
 
+# Système global de file d'attente
 queue_system: Optional[EncodingQueue] = None
 
 async def initialize_queue_system(max_concurrent: int = 2):
@@ -341,5 +366,10 @@ async def initialize_queue_system(max_concurrent: int = 2):
 async def shutdown_queue_system():
     global queue_system
     if queue_system is not None:
+        logger.info("Début de l'arrêt du système de file...")
+
+        await asyncio.sleep(5)
+
         await queue_system.stop(cancel_active=True)
+        queue_system = None
         logger.info("Système de file d'attente d'encodage arrêté")
