@@ -372,11 +372,11 @@ async def show_setting(callback_query: CallbackQuery):
     user = await get_or_create_user(user_id)
     settings_dict = await get_current_settings(user_id)
 
-    text = "⚙️ **sᴇᴛᴛɪɴɢs**"
-    text += f"▫️ **ᴜᴛɪʟɪsᴀᴛᴇᴜʀ:** `{user.first_name or user.user_id}`"
-    text += f"▫️ **ᴅᴇʀɴɪᴇʀᴇ ᴀᴄᴛɪᴠɪᴛᴇ́:** `{user.last_activity.strftime('%d/%m/%Y %H:%M') if user.last_activity else 'Jamais'}`"
+    text = "⚙️ **sᴇᴛᴛɪɴɢs**\n"
+    text += f"▫️ **ᴜᴛɪʟɪsᴀᴛᴇᴜʀ:** `{user.first_name or user.user_id}`\n"
+    text += f"▫️ **ᴅᴇʀɴɪᴇʀᴇ ᴀᴄᴛɪᴠɪᴛᴇ́:** `{user.last_activity.strftime('%d/%m/%Y %H:%M') if user.last_activity else 'Jamais'}`\n"
     text += f"▫️ **ɴʙ ᴄᴏᴍᴍᴀɴᴅᴇs:** `{user.command_count}`"
-    text += f"▫️ **ʟɪᴍɪᴛᴇ ᴊᴏᴜʀɴᴀʟɪᴇʀᴇ:** `{settings_dict['daily_limit']}/{settings_dict['max_file']}MB`"
+    text += f"▫️ **ʟɪᴍɪᴛᴇ ᴊᴏᴜʀɴᴀʟɪᴇʀᴇ:** `{settings_dict['daily_limit']}/{settings_dict['max_file']}MB`\n"
 
     kbs = create_inline_kb(
         [
@@ -512,16 +512,16 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             return
 
         elif query_data == "help":
-            help_text = "📚 **ᴀɪᴅᴇ ᴇᴛ ᴄᴏᴍᴍᴀɴᴅᴇs**"
-            help_text += "➻ ` /encode ` : ᴇɴᴄᴏᴅᴀɢᴇ ᴠɪᴅᴇ́ᴏ"
-            help_text += "➻ ` /compress ` : ᴄᴏᴍᴘʀᴇssɪᴏɴ ᴠɪᴅᴇ́ᴏ"
-            help_text += "➻ ` /merge ` : ғᴜsɪᴏɴɴᴇʀ ᴅᴇs ᴠɪᴅᴇ́ᴏs"
-            help_text += "➻ ` /split ` : ᴅᴇ́ᴄᴏᴜᴘᴇʀ ᴜɴᴇ ᴠɪᴅᴇ́ᴏ"
-            help_text += "➻ ` /subs ` : ᴍᴀɴᴀɢᴇᴍᴇɴᴛ sᴏᴜs-ᴛɪᴛʀᴇs"
-            help_text += "➻ ` /chapters ` : ᴇ́ᴅɪᴛɪᴏɴ ᴅᴇs ᴄʜᴀᴘɪᴛʀᴇs"
-            help_text += "➻ ` /convert ` : ᴄᴏɴᴠᴇʀsɪᴏɴ ғᴏʀᴍᴀᴛ"
-            help_text += "➻ ` /leech ` : ᴛᴇ́ʟᴇ́ᴄʜᴬʀɢᴇᴍᴇɴᴛ ᴜʀʟ"
-            help_text += "➻ ` /encode_uri ` : ᴍᴀɴɪᴘᴜʟᴀᴛɪᴏɴ ᴜʀʟ"
+            help_text = "📚 **ᴀɪᴅᴇ ᴇᴛ ᴄᴏᴍᴍᴀɴᴅᴇs**\n"
+            help_text += "➻ ` /encode ` : ᴇɴᴄᴏᴅᴀɢᴇ ᴠɪᴅᴇ́ᴏ\n"
+            help_text += "➻ ` /compress ` : ᴄᴏᴍᴘʀᴇssɪᴏɴ ᴠɪᴅᴇ́ᴏ\n"
+            help_text += "➻ ` /merge ` : ғᴜsɪᴏɴɴᴇʀ ᴅᴇs ᴠɪᴅᴇ́ᴏs\n"
+            help_text += "➻ ` /split ` : ᴅᴇ́ᴄᴏᴜᴘᴇʀ ᴜɴᴇ ᴠɪᴅᴇ́ᴏ\n"
+            help_text += "➻ ` /subs ` : ᴍᴀɴᴀɢᴇᴍᴇɴᴛ sᴏᴜs-ᴛɪᴛʀᴇs\n"
+            help_text += "➻ ` /chapters ` : ᴇ́ᴅɪᴛɪᴏɴ ᴅᴇs ᴄʜᴀᴘɪᴛʀᴇs\n"
+            help_text += "➻ ` /convert ` : ᴄᴏɴᴠᴇʀsɪᴏɴ ғᴏʀᴍᴀᴛ\n"
+            help_text += "➻ ` /leech ` : ᴛᴇ́ʟᴇ́ᴄʜᴬʀɢᴇᴍᴇɴᴛ ᴜʀʟ\n"
+            help_text += "➻ ` /encode_uri ` : ᴍᴀɴɪᴘᴜʟᴀᴛɪᴏɴ ᴜʀʟ\n"
             help_text += "ᴘᴏᴜʀ ᴘʟᴜs ᴅ'ɪɴғᴏs : /about"
 
             kb = InlineKeyboardMarkup(
@@ -550,13 +550,13 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             )
 
         elif query_data == "status":
-            status_text = "📊 **sᴛᴀᴛᴜs ᴅᴜ ʙᴏᴛ**"
-            status_text += f"• ᴠᴇʀsɪᴏɴ : `{settings.ISOCODE_VERSION}`"
+            status_text = "📊 **sᴛᴀᴛᴜs ᴅᴜ ʙᴏᴛ**\n"
+            status_text += f"• ᴠᴇʀsɪᴏɴ : `{settings.ISOCODE_VERSION}`\n"
             status_text += f"• ᴜᴘᴛɪᴍᴇ : `{get_uptime()}`"
 
             try:
-                status_text += f"• ᴄʜᴀʀɢᴇ : `{psutil.cpu_percent()}%`"
-                status_text += f"• ʀᴀᴍ : `{psutil.virtual_memory().percent}%`"
+                status_text += f"• ᴄʜᴀʀɢᴇ : `{psutil.cpu_percent()}%`\n"
+                status_text += f"• ʀᴀᴍ : `{psutil.virtual_memory().percent}%`\n"
             except Exception as e:
                 logger.error(f"Erreur psutil: {e}")
                 status_text += "• ᴍᴇ́ᴛʀɪϙᴜᴇs sʏsᴛᴇ̀ᴍᴇ : ɪɴᴅɪsᴘᴏɴɪʙʟᴇ"
@@ -700,10 +700,10 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             available = hw_accel_checker.get_available()
             kb = create_adjustment_kb("hwaccel", available, current)
 
-            text = "🚀 **Accélération matérielle (hwaccel)**"
-            text += "Utilise le matériel pour accélérer l'encodage."
-            text += f"▫️ **Actuel:** `{current}`"
-            text += f"▫️ **Disponible sur cette machine:**"
+            text = "🚀 **Accélération matérielle (hwaccel)**\n"
+            text += "Utilise le matériel pour accélérer l'encodage.\n"
+            text += f"▫️ **Actuel:** `{current}`\n"
+            text += f"▫️ **Disponible sur cette machine:**\n"
             for accel in ["cuda", "vaapi", "dxva2", "qsv"]:
                 status = "✅" if accel in available else "❌"
                 text += f"  - {status} {accel.upper()}"
@@ -749,9 +749,9 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             if setting_name == "pix_fmt" or setting_key == "pix_fmt":
                 current = await get_pix_fmt(user_id)
                 kb = create_adjustment_kb("pix_fmt", PIX_FMT_OPTIONS, current)
-                text = "🎨 **Format de pixel (pix_fmt)**"
-                text += "Ce paramètre contrôle le format de couleur utilisé dans la vidéo."
-                text += f"▫️ **Actuel:** `{current}`"
+                text = "🎨 **Format de pixel (pix_fmt)**\n"
+                text += "Ce paramètre contrôle le format de couleur utilisé dans la vidéo.\n"
+                text += f"▫️ **Actuel:** `{current}`\n"
                 text += "Options disponibles:"
                 await message.edit_text(
                     stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
@@ -774,9 +774,9 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                 current_track = await get_setting(user_id, "selected_subtitle_track")
                 options = [str(i) for i in range(1, 11)]
                 kb = create_adjustment_kb("selected_subtitle_track", options, str(current_track))
-                text = "📜 **Sélection de la piste de sous-titres**"
-                text += "Sélectionnez la piste de sous-titres à utiliser (pour l'extraction, l'incorporation ou le hardsub)."
-                text += f"▫️ **Piste actuelle:** `{current_track}`"
+                text = "📜 **Sélection de la piste de sous-titres**\n"
+                text += "Sélectionnez la piste de sous-titres à utiliser (pour l'extraction, l'incorporation ou le hardsub).\n"
+                text += f"▫️ **Piste actuelle:** `{current_track}`\n"
                 text += "Options disponibles:"
                 await message.edit_text(
                     stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN

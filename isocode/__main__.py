@@ -12,19 +12,22 @@ from isocode.plugins.cmd import sudo as sudo_flt
 from isocode.plugins.cmd import admin as admin_flt
 from isocode.utils.isoutils.dbutils import initialize_database, get_auth_chat
 from isocode.utils.isoutils.encoder import monitor_disk_space
-from isocode.utils.isoutils.queue import EncodingQueue, shutdown_queue_system
 import isocode.utils.isoutils.queue as queue
 from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
 from pyrogram.enums import ParseMode
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
-from pyrogram.types import CallbackQuery
 from isocode import settings, logger
 from isocode.utils.telegram.message import send_log
 from aiohttp import web
 
-log_chats = settings.LOG_CHANNELS if isinstance(settings.LOG_CHANNELS, list) else settings.LOG_CHANNELS.split(" ") if settings.LOG_CHANNELS else []
-
+log_chats = (
+    settings.LOG_CHANNELS
+    if isinstance(settings.LOG_CHANNELS, list)
+    else settings.LOG_CHANNELS.split(" ")
+    if settings.LOG_CHANNELS
+    else []
+)
 
 COMMON_CMDS = [
     BotCommand("start", "Démarrer le bot"),
@@ -65,19 +68,17 @@ ADMIN_PRIVATE_CMDS = [
 async def set_bot_commands(botclient):
     await botclient.set_bot_commands(
         COMMON_CMDS + USER_GROUP_CMDS + ADMIN_GROUP_CMDS,
-        scope=BotCommandScopeAllGroupChats()
+        scope=BotCommandScopeAllGroupChats(),
     )
-
     await botclient.set_bot_commands(
         COMMON_CMDS + ADMIN_PRIVATE_CMDS + ADMIN_GROUP_CMDS,
-        scope=BotCommandScopeAllPrivateChats()
+        scope=BotCommandScopeAllPrivateChats(),
     )
 
 async def auth_group_filter(_, __, message):
     """Filtre personnalisé pour les groupes authentifiés"""
     if not message.chat or message.chat.type not in ["group", "supergroup"]:
         return False
-
     try:
         auth_chat = await get_auth_chat(message.chat.id)
         return auth_chat is not None
@@ -85,15 +86,20 @@ async def auth_group_filter(_, __, message):
         logger.error(f"Erreur vérification groupe authentifié: {e}")
         return False
 
-# Création du filtre
 auth_group_flt = filters.create(auth_group_filter)
 
 async def main():
-    """Fonction principale asynchrone"""
     logger.info("Démarrage de l'application IsoCode...")
     settings.START_TIME = time.time()
     await initialize_clients()
-    await queue.initialize_queue_system(max_concurrent=2)
+
+    try:
+        await queue.initialize_queue_system(max_concurrent=2)
+    except Exception as e:
+        logger.error(f"Erreur lors de l'initialisation de la queue d'encodage : {e}")
+    else:
+        logger.info("Système de file d'attente d'encodage initialisé avec succès")
+
     hw_accel_checker.check_all()
 
     botclient = clients.get_client()
@@ -102,74 +108,52 @@ async def main():
     logger.info(f"{mebot.first_name} ({mebot.id}) démarré avec succès")
     user_me = await user_client.get_me()
     logger.info(f"Userbot démarré: {user_me.first_name} ({user_me.id})")
+
     await initialize_database()
 
     await set_bot_commands(botclient)
+
     apps = web.AppRunner(await web_server())
     await apps.setup()
     await web.TCPSite(apps, "0.0.0.0", 8080).start()
     asyncio.create_task(monitor_disk_space("/", 30))
-    # hw_accel_checker.check_all()
 
     # Handlers avec nouveau filtre pour groupes authentifiés
     botclient.add_handler(
         MessageHandler(
             handle_video,
-            filters.private & (filters.video | filters.document) & (admin_flt | sudo_flt)
+            filters.private & (filters.video | filters.document) & (admin_flt | sudo_flt),
         )
     )
-
-    # Nouveau handler pour groupes authentifiés
     botclient.add_handler(
         MessageHandler(
             handle_video,
-            filters.group & (filters.video | filters.document) & auth_group_flt
+            filters.group & (filters.video | filters.document) & auth_group_flt,
         )
     )
-
-    # Handler existant pour utilisateurs autorisés (gardé pour compatibilité)
     botclient.add_handler(
         MessageHandler(
             handle_video,
-            filters.group & (filters.video | filters.document) & user_flt
+            filters.group & (filters.video | filters.document) & user_flt,
         )
     )
     botclient.add_handler(CallbackQueryHandler(handle_callback_query))
-    # for chat_id in log_chats:
-    #     try:
-    #         await user_client.get_chat(int(chat_id))
-    #     except Exception as e:
-    #         logger.warning(f"Impossible de résoudre le chat {chat_id} : {e}")
-
-    # try:
-    #     for chat in log_chats:
-    #         await send_log(
-    #             user_client,
-    #             text=f"**Bot Version V.{settings.ISOCODE_VERSION}**\n\n"
-    #                  f"Bot: {mebot.first_name} ({mebot.id})\n"
-    #                  f"Userbot: {user_me.first_name} ({user_me.id})",
-    #             level="INFO",
-    #             parse=ParseMode.MARKDOWN
-    #         )
-    #         logger.info(f"Message de démarrage envoyé à {chat}")
-    # except Exception as e:
-    #     pass
 
     shutdown_event = asyncio.Event()
-
     loop = asyncio.get_running_loop()
-    for signame in ('SIGINT', 'SIGTERM'):
-        loop.add_signal_handler(
-            getattr(signal, signame),
-            lambda: shutdown_event.set()
-        )
+
+    for signame in ("SIGINT", "SIGTERM"):
+        loop.add_signal_handler(getattr(signal, signame), lambda: shutdown_event.set())
 
     try:
         await shutdown_event.wait()
     except asyncio.CancelledError:
         pass
     finally:
-        await shutdown_queue_system()
+        try:
+            await queue.shutdown_queue_system()
+        except Exception as e:
+            logger.error(f"Erreur lors de l'arrêt de la queue : {e}")
         logger.info("Arrêt demandé, début du processus d'arrêt...")
 
 if __name__ == "__main__":
