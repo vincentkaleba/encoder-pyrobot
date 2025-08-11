@@ -9,7 +9,7 @@ ENV PYTHONFAULTHANDLER=1
 
 # Mise à jour du système et installation des dépendances
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \  # Ajout des certificats SSL
+    ca-certificates \
     build-essential \
     zlib1g-dev \
     libncurses5-dev \
@@ -30,13 +30,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Téléchargement et installation de Python 3.12.1 (avec vérification SSL désactivée)
+# Téléchargement et installation de Python 3.12.1
 RUN wget --no-check-certificate https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tar.xz && \
     tar -xf Python-3.12.1.tar.xz && \
     cd Python-3.12.1 && \
     ./configure --enable-optimizations && \
     make -j $(nproc) && \
-    make altinstall && \ 
+    make altinstall && \
     cd .. && \
     rm -rf Python-3.12.1 Python-3.12.1.tar.xz
 
