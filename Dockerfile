@@ -1,4 +1,4 @@
-# Utiliser Ubuntu 22.04 comme base (plus stable pour Python 3.12)
+# Utiliser Ubuntu 22.04 comme base
 FROM ubuntu:22.04
 
 # Configuration de l'environnement
@@ -7,8 +7,9 @@ ENV TZ=UTC
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONFAULTHANDLER=1
 
-# Mise à jour du système et installation des dépendances pour compiler Python
+# Mise à jour du système et installation des dépendances
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \  # Ajout des certificats SSL
     build-essential \
     zlib1g-dev \
     libncurses5-dev \
@@ -29,13 +30,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Téléchargement et installation de Python 3.12.1
-RUN wget https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tar.xz && \
+# Téléchargement et installation de Python 3.12.1 (avec vérification SSL désactivée)
+RUN wget --no-check-certificate https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tar.xz && \
     tar -xf Python-3.12.1.tar.xz && \
     cd Python-3.12.1 && \
     ./configure --enable-optimizations && \
     make -j $(nproc) && \
-    make install && \
+    make altinstall && \ 
     cd .. && \
     rm -rf Python-3.12.1 Python-3.12.1.tar.xz
 
@@ -43,7 +44,7 @@ RUN wget https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tar.xz && \
 RUN mkdir /app && chmod 777 /app
 WORKDIR /app
 
-# Installation de pip
+# Installation de pip pour Python 3.12
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
 # Copie des fichiers de l'application
