@@ -1,25 +1,23 @@
-#!/usr/bin/env python3
 import asyncio
-import os
 import signal
 import time
-from pyrogram import Client, filters
+from aiohttp import web
+from pyrogram.enums import ParseMode
 from pyrogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+from pyrogram import filters
+
+from isocode import settings, logger
 from isocode.plugins.data import handle_callback_query, hw_accel_checker
 from isocode.plugins.video_hander import handle_video
 from isocode.plugins.cmd import user as user_flt
 from isocode.plugins.cmd import sudo as sudo_flt
 from isocode.plugins.cmd import admin as admin_flt
 from isocode.utils.isoutils.dbutils import initialize_database, get_auth_chat
-from isocode.utils.isoutils.encoder import monitor_disk_space
 import isocode.utils.isoutils.queue as queue
 from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
-from pyrogram.enums import ParseMode
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler
-from isocode import settings, logger
 from isocode.utils.telegram.message import send_log
-from aiohttp import web
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 
 log_chats = (
     settings.LOG_CHANNELS
@@ -91,8 +89,11 @@ auth_group_flt = filters.create(auth_group_filter)
 async def main():
     logger.info("Démarrage de l'application IsoCode...")
     settings.START_TIME = time.time()
+
+    # Initialisation clients Pyrogram
     await initialize_clients()
 
+    # Initialisation système file d'attente encoding
     try:
         await queue.initialize_queue_system(max_concurrent=2)
     except Exception as e:
@@ -100,6 +101,7 @@ async def main():
     else:
         logger.info("Système de file d'attente d'encodage initialisé avec succès")
 
+    # Vérification matériel accélération
     hw_accel_checker.check_all()
 
     botclient = clients.get_client()
@@ -113,12 +115,13 @@ async def main():
 
     await set_bot_commands(botclient)
 
+    # Démarrage serveur web aiohttp
     apps = web.AppRunner(await web_server())
     await apps.setup()
     await web.TCPSite(apps, "0.0.0.0", 8080).start()
-    asyncio.create_task(monitor_disk_space("/", 30))
+    asyncio.create_task(queue.monitor_disk_space("/", 30))
 
-    # Handlers avec nouveau filtre pour groupes authentifiés
+    # Ajout des handlers Pyrogram
     botclient.add_handler(
         MessageHandler(
             handle_video,
@@ -142,32 +145,29 @@ async def main():
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
+    # Gestion propre des signaux sous Linux (Ubuntu)
     for signame in ("SIGINT", "SIGTERM"):
-        loop.add_signal_handler(getattr(signal, signame), lambda: shutdown_event.set())
+        loop.add_signal_handler(getattr(signal, signame), shutdown_event.set)
+
+    logger.info("En attente d'un signal SIGINT ou SIGTERM...")
 
     try:
         await shutdown_event.wait()
     except asyncio.CancelledError:
         pass
-    finally:
-        try:
-            await queue.shutdown_queue_system()
-        except Exception as e:
-            logger.error(f"Erreur lors de l'arrêt de la queue : {e}")
-        logger.info("Arrêt demandé, début du processus d'arrêt...")
 
-if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    logger.info("Signal d'arrêt reçu, début du processus d'arrêt...")
 
     try:
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        logger.info("Interruption clavier détectée")
+        await queue.shutdown_queue_system()
     except Exception as e:
-        logger.error(f"Erreur inattendue: {e}")
-    finally:
-        logger.info("Arrêt des clients...")
-        loop.run_until_complete(shutdown_clients())
-        loop.close()
-        logger.info("Application arrêtée proprement")
+        logger.error(f"Erreur lors de l'arrêt de la queue : {e}")
+
+    # Arrêt des clients Pyrogram
+    await shutdown_clients()
+
+    logger.info("Application arrêtée proprement")
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
