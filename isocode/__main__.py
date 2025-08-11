@@ -12,7 +12,8 @@ from isocode.plugins.cmd import sudo as sudo_flt
 from isocode.plugins.cmd import admin as admin_flt
 from isocode.utils.isoutils.dbutils import initialize_database, get_auth_chat
 from isocode.utils.isoutils.encoder import monitor_disk_space
-from isocode.utils.isoutils.queue import EncodingQueue, initialize_queue_system, shutdown_queue_system
+from isocode.utils.isoutils.queue import EncodingQueue, shutdown_queue_system
+import isocode.utils.isoutils.queue as queue
 from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
 from pyrogram.enums import ParseMode
@@ -92,7 +93,7 @@ async def main():
     logger.info("Démarrage de l'application IsoCode...")
     settings.START_TIME = time.time()
     await initialize_clients()
-    await initialize_queue_system(max_concurrent=2)
+    await queue.initialize_queue_system(max_concurrent=2)
     hw_accel_checker.check_all()
 
     botclient = clients.get_client()
