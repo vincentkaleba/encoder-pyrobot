@@ -8,7 +8,7 @@ from aiohttp import web
 from pyrogram.enums import ParseMode
 from pyrogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 from pyrogram import filters
-
+import resource
 from isocode import settings, logger
 from isocode.plugins.data import handle_callback_query, hw_accel_checker
 from isocode.plugins.video_hander import handle_video
@@ -89,28 +89,46 @@ async def auth_group_filter(_, __, message):
 
 auth_group_flt = filters.create(auth_group_filter)
 
+
 async def apply_system_optimizations():
-    """Appliquer des optimisations système pour améliorer les performances"""
     logger.info("Application des optimisations système...")
 
-    # Augmenter les limites système
-    os.system("sysctl -w vm.swappiness=10")
-    os.system("sysctl -w vm.dirty_ratio=40")
-    os.system("sysctl -w vm.dirty_background_ratio=10")
-    os.system("sysctl -w vm.max_map_count=262144")
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (65536, hard))
+        logger.info(f"Limite de fichiers augmentée à 65536 (soft) / {hard} (hard)")
+    except Exception as e:
+        logger.error(f"Impossible d'augmenter limite fichiers: {e}")
 
-    # Optimiser les E/S
-    if os.path.exists('/sys/block/sda/queue/scheduler'):
-        os.system("echo 'deadline' > /sys/block/sda/queue/scheduler")
-        os.system("echo 1024 > /sys/block/sda/queue/nr_requests")
+    for cmd in [
+        "sysctl -w vm.swappiness=10",
+        "sysctl -w vm.dirty_ratio=40",
+        "sysctl -w vm.dirty_background_ratio=10",
+        "sysctl -w vm.max_map_count=262144",
+    ]:
+        ret = os.system(cmd)
+        if ret != 0:
+            logger.warning(f"Commande sysctl échouée: {cmd}")
 
-    # Augmenter les limites de fichiers
-    os.system("ulimit -n 65536")
+    scheduler_path = "/sys/block/sda/queue/scheduler"
+    if os.path.exists(scheduler_path):
+        try:
+            with open(scheduler_path, "w") as f:
+                f.write("deadline")
+            with open("/sys/block/sda/queue/nr_requests", "w") as f:
+                f.write("1024")
+            logger.info("Optimisation IO appliquée")
+        except PermissionError:
+            logger.warning("Pas les droits pour modifier scheduler IO")
+        except Exception as e:
+            logger.error(f"Erreur lors de l'optimisation IO: {e}")
 
-    # Désactiver le swap si assez de mémoire
-    if psutil.virtual_memory().total >= 8 * 1024**3:  # 8GB+
-        os.system("swapoff -a")
-        logger.info("Swap désactivé pour améliorer les performances")
+    if psutil.virtual_memory().total >= 8 * 1024**3:
+        ret = os.system("swapoff -a")
+        if ret == 0:
+            logger.info("Swap désactivé")
+        else:
+            logger.warning("Impossible de désactiver le swap (droits ?)")
 
 async def monitor_system_resources(interval: int = 60):
     """Surveiller et logger les ressources système"""
