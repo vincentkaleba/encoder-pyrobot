@@ -175,11 +175,11 @@ async def main():
     hw_accel_checker.check_all()
 
     botclient = clients.get_client()
-    user_client = clients.get_client("userbot")
+    # user_client = clients.get_client("userbot")
     mebot = await botclient.get_me()
     logger.info(f"{mebot.first_name} ({mebot.id}) démarré avec succès")
-    user_me = await user_client.get_me()
-    logger.info(f"Userbot démarré: {user_me.first_name} ({user_me.id})")
+    # user_me = await user_client.get_me()
+    # logger.info(f"Userbot démarré: {user_me.first_name} ({user_me.id})")
 
     await initialize_database()
 
