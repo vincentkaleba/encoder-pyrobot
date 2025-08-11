@@ -93,7 +93,7 @@ async def main():
     settings.START_TIME = time.time()
     await initialize_clients()
     await initialize_queue_system(max_concurrent=2)
-    asyncio.create_task(hw_accel_checker.check_all())
+    hw_accel_checker.check_all()
 
     botclient = clients.get_client()
     user_client = clients.get_client("userbot")

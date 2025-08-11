@@ -90,48 +90,54 @@ class EncodingQueue:
 
     async def _process_queue(self) -> None:
         logger.info("Démarrage du processeur de file d'attente")
+        try:
+            while not self._stop_event.is_set():
 
-        while not self._stop_event.is_set():
-            tasks_to_start: List[EncodingTask] = []
+                while not self._stop_event.is_set():
+                    tasks_to_start: List[EncodingTask] = []
 
-            # construire la liste des tâches à démarrer en atomique
-            async with self.queue_notifier:
-                available_slots = self.max_concurrent - len(self.running_tasks)
-                # popleft en toute sécurité
-                for _ in range(min(available_slots, len(self.queue))):
-                    tasks_to_start.append(self.queue.popleft())
+                    # construire la liste des tâches à démarrer en atomique
+                    async with self.queue_notifier:
+                        available_slots = self.max_concurrent - len(self.running_tasks)
+                        # popleft en toute sécurité
+                        for _ in range(min(available_slots, len(self.queue))):
+                            tasks_to_start.append(self.queue.popleft())
 
-                # mettre à jour les positions
-                for idx, queued_task in enumerate(self.queue):
-                    queued_task.position = idx + 1
+                        # mettre à jour les positions
+                        for idx, queued_task in enumerate(self.queue):
+                            queued_task.position = idx + 1
 
-            # démarrer les tâches hors de la section critique (mais après les avoir extraites)
-            for task in tasks_to_start:
-                task.status = "PROCESSING"
-                task.start_time = time.time()
+                    # démarrer les tâches hors de la section critique (mais après les avoir extraites)
+                    for task in tasks_to_start:
+                        task.status = "PROCESSING"
+                        task.start_time = time.time()
 
-                task_obj = asyncio.create_task(self._execute_task(task), name=task.id)
+                        task_obj = asyncio.create_task(self._execute_task(task), name=task.id)
 
-                async with self.queue_notifier:
-                    self.active_tasks[task.id] = task
-                    self.running_tasks[task.id] = task_obj
+                        async with self.queue_notifier:
+                            self.active_tasks[task.id] = task
+                            self.running_tasks[task.id] = task_obj
 
-                logger.info(f"Tâche démarrée: {task.id}")
+                        logger.info(f"Tâche démarrée: {task.id}")
 
-            # attendre une notification ou timeout (en utilisant la même condition)
-            try:
-                async with self.queue_notifier:
-                    # si vide, attendre plus longtemps
-                    timeout = 5.0 if not self.queue else 0.1
-                    await asyncio.wait_for(self.queue_notifier.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
-                # rien à faire — on roule de nouveau
-                pass
-            except Exception as e:
-                # log et continuer
-                logger.exception(f"Erreur dans _process_queue wait: {e}")
+                    try:
+                        async with self.queue_notifier:
+                            timeout = 5.0 if not self.queue else 0.1
+                            await asyncio.wait_for(self.queue_notifier.wait(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        pass
+                    except asyncio.CancelledError:
+                        logger.info("Traitement de file annulé")
+                        raise
+                    except Exception as e:
+                        logger.exception(f"Erreur dans _process_queue wait: {e}")
 
-        logger.info("Arrêt du processeur de file d'attente")
+        except asyncio.CancelledError:
+            logger.info("Processeur de file arrêté")
+            raise
+        finally:
+            logger.info("Arrêt du processeur de file d'attente")
+
 
     async def _execute_task(self, task: EncodingTask) -> None:
         task_id = task.id
