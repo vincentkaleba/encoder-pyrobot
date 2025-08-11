@@ -3,7 +3,13 @@ import signal
 import time
 from aiohttp import web
 from pyrogram.enums import ParseMode
+from aiohttp import web
+from pyrogram.enums import ParseMode
 from pyrogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+from pyrogram import filters
+
+from isocode import settings, logger
+from isocode.plugins.data import handle_callback_query, hw_accel_checker
 from pyrogram import filters
 
 from isocode import settings, logger
@@ -18,7 +24,15 @@ from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
 from isocode.utils.telegram.message import send_log
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 
+log_chats = (
+    settings.LOG_CHANNELS
+    if isinstance(settings.LOG_CHANNELS, list)
+    else settings.LOG_CHANNELS.split(" ")
+    if settings.LOG_CHANNELS
+    else []
+)
 log_chats = (
     settings.LOG_CHANNELS
     if isinstance(settings.LOG_CHANNELS, list)
@@ -67,9 +81,11 @@ async def set_bot_commands(botclient):
     await botclient.set_bot_commands(
         COMMON_CMDS + USER_GROUP_CMDS + ADMIN_GROUP_CMDS,
         scope=BotCommandScopeAllGroupChats(),
+        scope=BotCommandScopeAllGroupChats(),
     )
     await botclient.set_bot_commands(
         COMMON_CMDS + ADMIN_PRIVATE_CMDS + ADMIN_GROUP_CMDS,
+        scope=BotCommandScopeAllPrivateChats(),
         scope=BotCommandScopeAllPrivateChats(),
     )
 
@@ -111,9 +127,12 @@ async def main():
     user_me = await user_client.get_me()
     logger.info(f"Userbot démarré: {user_me.first_name} ({user_me.id})")
 
+
     await initialize_database()
 
     await set_bot_commands(botclient)
+
+    # Démarrage serveur web aiohttp
 
     # Démarrage serveur web aiohttp
     apps = web.AppRunner(await web_server())
@@ -122,9 +141,11 @@ async def main():
     asyncio.create_task(queue.monitor_disk_space("/", 30))
 
     # Ajout des handlers Pyrogram
+    # Ajout des handlers Pyrogram
     botclient.add_handler(
         MessageHandler(
             handle_video,
+            filters.private & (filters.video | filters.document) & (admin_flt | sudo_flt),
             filters.private & (filters.video | filters.document) & (admin_flt | sudo_flt),
         )
     )
@@ -132,18 +153,27 @@ async def main():
         MessageHandler(
             handle_video,
             filters.group & (filters.video | filters.document) & auth_group_flt,
+            filters.group & (filters.video | filters.document) & auth_group_flt,
         )
     )
     botclient.add_handler(
         MessageHandler(
             handle_video,
             filters.group & (filters.video | filters.document) & user_flt,
+            filters.group & (filters.video | filters.document) & user_flt,
         )
     )
+    botclient.add_handler(CallbackQueryHandler(handle_callback_query))
     botclient.add_handler(CallbackQueryHandler(handle_callback_query))
 
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
+
+    # Gestion propre des signaux sous Linux (Ubuntu)
+    for signame in ("SIGINT", "SIGTERM"):
+        loop.add_signal_handler(getattr(signal, signame), shutdown_event.set)
+
+    logger.info("En attente d'un signal SIGINT ou SIGTERM...")
 
     # Gestion propre des signaux sous Linux (Ubuntu)
     for signame in ("SIGINT", "SIGTERM"):
@@ -157,10 +187,23 @@ async def main():
         pass
 
     logger.info("Signal d'arrêt reçu, début du processus d'arrêt...")
+    logger.info("Signal d'arrêt reçu, début du processus d'arrêt...")
 
     try:
         await queue.shutdown_queue_system()
+        await queue.shutdown_queue_system()
     except Exception as e:
+        logger.error(f"Erreur lors de l'arrêt de la queue : {e}")
+
+    # Arrêt des clients Pyrogram
+    await shutdown_clients()
+
+    logger.info("Application arrêtée proprement")
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+
         logger.error(f"Erreur lors de l'arrêt de la queue : {e}")
 
     # Arrêt des clients Pyrogram
