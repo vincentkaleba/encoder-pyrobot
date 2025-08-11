@@ -2,7 +2,7 @@
 FROM ubuntu:20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Kolkata
+ENV TZ=UTC 
 
 # Créer le dossier de travail
 RUN mkdir /app && chmod 777 /app
@@ -29,4 +29,3 @@ EXPOSE 8080
 
 # Commande de démarrage
 CMD ["python3", "-m", "isocode"]
-
