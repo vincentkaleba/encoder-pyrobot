@@ -1,39 +1,62 @@
-# Utiliser Ubuntu 20.04 comme base
-FROM ubuntu:20.04
+# Utiliser Ubuntu 22.04 comme base (plus stable pour Python 3.12)
+FROM ubuntu:22.04
 
 # Configuration de l'environnement
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONFAULTHANDLER=1
 
-# Créer le dossier de travail
+# Mise à jour du système et installation des dépendances pour compiler Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    zlib1g-dev \
+    libncurses5-dev \
+    libgdbm-dev \
+    libnss3-dev \
+    libssl-dev \
+    libreadline-dev \
+    libffi-dev \
+    libsqlite3-dev \
+    liblzma-dev \
+    wget \
+    curl \
+    git \
+    p7zip-full \
+    p7zip-rar \
+    unzip \
+    mkvtoolnix \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Téléchargement et installation de Python 3.12.1
+RUN wget https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tar.xz && \
+    tar -xf Python-3.12.1.tar.xz && \
+    cd Python-3.12.1 && \
+    ./configure --enable-optimizations && \
+    make -j $(nproc) && \
+    make install && \
+    cd .. && \
+    rm -rf Python-3.12.1 Python-3.12.1.tar.xz
+
+# Création du dossier de travail
 RUN mkdir /app && chmod 777 /app
 WORKDIR /app
 
-# Installer les dépendances système et Python 3.10
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common && \
-    add-apt-repository ppa:deadsnakes/ppa -y && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    git wget curl busybox python3.10 python3.10-dev python3.10-distutils \
-    p7zip-full p7zip-rar unzip mkvtoolnix ffmpeg \
-    build-essential libxml2-dev libxslt1-dev && \
-    rm -rf /var/lib/apt/lists/*
+# Installation de pip
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
-# Installer pip pour Python 3.10
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
-
-# Copier les fichiers de l'application (fait après l'installation des dépendances pour mieux utiliser le cache Docker)
+# Copie des fichiers de l'application
 COPY . .
 
-# Installer les dépendances Python
-RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
+# Installation des dépendances Python
+RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
 
-# Rendre le script extract exécutable
-# RUN chmod +x extract
+# Nettoyage
+RUN python3.12 -m pip cache purge
 
 # Exposer le port
 EXPOSE 8080
 
 # Commande de démarrage
-CMD ["python3.10", "-m", "isocode"]
+CMD ["python3.12", "-m", "isocode"]
