@@ -11,6 +11,7 @@ from isocode.plugins.cmd import user as user_flt
 from isocode.plugins.cmd import sudo as sudo_flt
 from isocode.plugins.cmd import admin as admin_flt
 from isocode.utils.isoutils.dbutils import initialize_database, get_auth_chat
+from isocode.utils.isoutils.encoder import monitor_disk_space
 from isocode.utils.isoutils.queue import queue_system, shutdown_queue_system
 from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
@@ -92,6 +93,7 @@ async def main():
     settings.START_TIME = time.time()
     await initialize_clients()
     asyncio.create_task(queue_system.start())
+    asyncio.create_task(hw_accel_checker.check_all())
 
     botclient = clients.get_client()
     user_client = clients.get_client("userbot")
@@ -105,7 +107,8 @@ async def main():
     apps = web.AppRunner(await web_server())
     await apps.setup()
     await web.TCPSite(apps, "0.0.0.0", 8080).start()
-    hw_accel_checker.check_all()
+    asyncio.create_task(monitor_disk_space("/", 30))
+    # hw_accel_checker.check_all()
 
     # Handlers avec nouveau filtre pour groupes authentifiés
     botclient.add_handler(
