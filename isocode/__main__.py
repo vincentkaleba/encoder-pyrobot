@@ -1,6 +1,9 @@
 import asyncio
 import signal
 import time
+import multiprocessing
+import psutil
+import os
 from aiohttp import web
 from pyrogram.enums import ParseMode
 from pyrogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
@@ -17,7 +20,6 @@ import isocode.utils.isoutils.queue as queue
 import isocode.utils.isoutils.encoder as encoder
 from isocode.utils.isoutils.routes import web_server
 from isocode.utils.telegram.clients import initialize_clients, shutdown_clients, clients
-from isocode.utils.telegram.message import send_log
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 
 log_chats = (
@@ -87,16 +89,65 @@ async def auth_group_filter(_, __, message):
 
 auth_group_flt = filters.create(auth_group_filter)
 
+async def apply_system_optimizations():
+    """Appliquer des optimisations système pour améliorer les performances"""
+    logger.info("Application des optimisations système...")
+
+    # Augmenter les limites système
+    os.system("sysctl -w vm.swappiness=10")
+    os.system("sysctl -w vm.dirty_ratio=40")
+    os.system("sysctl -w vm.dirty_background_ratio=10")
+    os.system("sysctl -w vm.max_map_count=262144")
+
+    # Optimiser les E/S
+    if os.path.exists('/sys/block/sda/queue/scheduler'):
+        os.system("echo 'deadline' > /sys/block/sda/queue/scheduler")
+        os.system("echo 1024 > /sys/block/sda/queue/nr_requests")
+
+    # Augmenter les limites de fichiers
+    os.system("ulimit -n 65536")
+
+    # Désactiver le swap si assez de mémoire
+    if psutil.virtual_memory().total >= 8 * 1024**3:  # 8GB+
+        os.system("swapoff -a")
+        logger.info("Swap désactivé pour améliorer les performances")
+
+async def monitor_system_resources(interval: int = 60):
+    """Surveiller et logger les ressources système"""
+    while True:
+        try:
+            cpu = psutil.cpu_percent()
+            mem = psutil.virtual_memory().percent
+            disk = psutil.disk_usage('/').percent
+            load = os.getloadavg()
+
+            logger.info(
+                f"📊 Ressources: CPU: {cpu}% | MEM: {mem}% | DISK: {disk}% | "
+                f"Load: {load[0]:.2f}, {load[1]:.2f}, {load[2]:.2f}"
+            )
+        except Exception as e:
+            logger.error(f"Erreur de surveillance: {e}")
+
+        await asyncio.sleep(interval)
+
 async def main():
     logger.info("Démarrage de l'application IsoCode...")
     settings.START_TIME = time.time()
 
+    # Appliquer les optimisations système
+    await apply_system_optimizations()
+
     # Initialisation clients Pyrogram
     await initialize_clients()
 
+    # Calcul du nombre concurrent basé sur les cœurs CPU
+    cpu_cores = multiprocessing.cpu_count()
+    concurrent_tasks = max(2, cpu_cores * 2)  # 2 tâches par cœur
+    logger.info(f"Configuration du système de file avec {concurrent_tasks} tâches concurrentes")
+
     # Initialisation système file d'attente encoding
     try:
-        await queue.initialize_queue_system(max_concurrent=2)
+        await queue.initialize_queue_system(max_concurrent=concurrent_tasks)
     except Exception as e:
         logger.error(f"Erreur lors de l'initialisation de la queue d'encodage : {e}")
     else:
@@ -120,7 +171,10 @@ async def main():
     apps = web.AppRunner(await web_server())
     await apps.setup()
     await web.TCPSite(apps, "0.0.0.0", 8080).start()
+
+    # Surveillance des ressources
     asyncio.create_task(encoder.monitor_disk_space("/", 30))
+    asyncio.create_task(monitor_system_resources(60))
 
     # Ajout des handlers Pyrogram
     botclient.add_handler(
