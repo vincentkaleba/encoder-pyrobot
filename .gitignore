@@ -19,6 +19,7 @@ venv.bak/
 # Pyrogram / Telethon / Telegram sessions
 
 *.session
+*.session-journal
 
 # Distribution / packaging
 build/

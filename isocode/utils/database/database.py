@@ -449,7 +449,7 @@ class User(BaseModel):
     selected_subtitle_track: Optional[str] = None
 
     # Flags supplémentaires
-    aspect: bool = False
+    aspect: str = "original"
     cabac: bool = False
     bits: bool = False
     drive: bool = False

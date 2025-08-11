@@ -42,6 +42,8 @@ from isocode.utils.isoutils.progress import stylize_value
 import psutil
 import os
 import subprocess
+import re
+import base64
 from isocode.config import settings
 from isocode.utils.telegram.media import send_media
 
@@ -70,7 +72,7 @@ SAMPLE_RATE_OPTIONS = ["44100", "48000", "88200", "96000"]
 # Liste des modèles de canaux audio
 CHANNEL_OPTIONS = ["mono", "stereo", "2.1", "5.1", "7.1"]
 
-# Mapping pour raccourcir les noms de paramètres dans callback_data
+# Mapping pour raccourcir les noms de paramètres dans callback_data (si nécessaire)
 SHORT_SETTING_MAP = {
     "crf": "crf",
     "threads": "th",
@@ -82,9 +84,7 @@ SHORT_SETTING_MAP = {
     "selected_subtitle_track": "st",
 }
 
-LONG_SETTING_MAP = {v: k for k, v in SHORT_SETTING_MAP.items()}
-
-# Options pour les paramètres cycliques
+# Options pour les paramètres (sous-menus)
 SETTING_CYCLE_OPTIONS = {
     "video_codec": ["libx264", "libx265", "libvpx", "h264_nvenc", "hevc_nvenc"],
     "resolution": ["original", "480p", "720p", "1080p", "1440p", "2160p"],
@@ -100,7 +100,8 @@ SETTING_CYCLE_OPTIONS = {
         "veryslow",
     ],
     "hwaccel": ["none", "auto", "cuda", "vaapi", "dxva2", "qsv"],
-    "audio_codec": ["aac", "opus", "mp3", "flac", "ac3", "copy"],
+    # audio_codec values come from AudioCodec enum
+    "audio_codec": [c.value for c in AudioCodec],
     "audio_track_action": [
         "all",
         "first",
@@ -127,15 +128,24 @@ SETTING_CYCLE_OPTIONS = {
         "fastdecode",
         "zerolatency",
     ],
+    "aspect": ["original", "16:9", "4:3", "21:9"],
 }
 
-# Mapping des noms courts vers les vrais noms de paramètres
+# Mapping des noms courts vers les vrais noms de paramètres (pour compatibilité)
 SETTING_NAME_MAP = {
     "subaction": "subtitle_action",
     "audio_track": "audio_track_action",
     "format": "extensions",
     "subs_track": "selected_subtitle_track",
 }
+
+# Liste de tous les noms de settings connus (pour résolution des noms sanitizés)
+KNOWN_SETTING_NAMES = set(list(SETTING_CYCLE_OPTIONS.keys()) + [
+    'pix_fmt', 'channels', 'audio_bitrate', 'selected_subtitle_track',
+    'video_codec', 'subtitle_action', 'audio_codec', 'upload_as_doc',
+    'hardsub', 'subtitles', 'normalize_audio', 'cabac', 'metadata', 'watermark',
+    'crf', 'threads', 'daily_limit', 'max_file', 'audio_track_action'
+])
 
 # ==================== Classe de vérification matérielle ====================
 class HardwareAcceleratorChecker:
@@ -146,19 +156,17 @@ class HardwareAcceleratorChecker:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            # Initialisation unique au premier appel
             cls._instance.available_accels = None
         return cls._instance
 
     def check_cuda_available(self) -> bool:
-        """Vérifie physiquement la présence d'un GPU NVIDIA avec CUDA"""
         try:
             if os.path.exists("/dev/nvidia0") or os.path.exists("/dev/nvidiactl"):
                 result = subprocess.run(
                     ["nvidia-smi", "-L"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True
+                    text=True,
                 )
                 return "GPU" in result.stdout
             return False
@@ -166,51 +174,36 @@ class HardwareAcceleratorChecker:
             return False
 
     def check_vaapi_available(self) -> bool:
-        """Vérifie physiquement la présence d'un périphérique VA-API"""
         try:
-            render_devices = [
-                f for f in os.listdir("/dev/dri")
-                if f.startswith("renderD")
-            ]
+            render_devices = [f for f in os.listdir("/dev/dri") if f.startswith("renderD")]
             if not render_devices:
                 return False
-
             device = f"/dev/dri/{render_devices[0]}"
             return os.access(device, os.R_OK | os.W_OK)
         except Exception:
             return False
 
     def check_qsv_available(self) -> bool:
-        """Vérifie physiquement la présence d'un périphérique Intel Quick Sync"""
         try:
-            card_devices = [
-                f for f in os.listdir("/dev/dri")
-                if f.startswith("card")
-            ]
+            card_devices = [f for f in os.listdir("/dev/dri") if f.startswith("card")]
             if not card_devices:
                 return False
-
             device = f"/dev/dri/{card_devices[0]}"
             return os.access(device, os.R_OK | os.W_OK)
         except Exception:
             return False
 
     def check_dxva2_available(self) -> bool:
-        """Vérifie si DXVA2 est disponible (Windows uniquement)"""
         try:
             return os.name == "nt"
         except Exception:
             return False
 
     def check_all(self):
-        """Effectue toutes les vérifications matérielles une seule fois"""
         if self.available_accels is not None:
             return self.available_accels
 
-        # Toujours disponibles
         available = {"none", "auto"}
-
-        # Vérifications matérielles
         if self.check_cuda_available():
             available.add("cuda")
         if self.check_vaapi_available():
@@ -220,26 +213,21 @@ class HardwareAcceleratorChecker:
         if self.check_dxva2_available():
             available.add("dxva2")
 
-        # Filtre et ordonne les options valides
         valid_hwaccels = ["none", "auto", "cuda", "vaapi", "dxva2", "qsv"]
         self.available_accels = [accel for accel in valid_hwaccels if accel in available]
-
         logger.info(f"Accélérateurs matériels détectés: {self.available_accels}")
         return self.available_accels
 
     def get_available(self) -> list:
-        """Retourne la liste des accélérateurs disponibles (sans re-vérifier)"""
         if self.available_accels is None:
             return self.check_all()
         return self.available_accels
 
-# Initialisation globale du vérificateur matériel
 hw_accel_checker = HardwareAcceleratorChecker()
 
 
 # ==================== Fonctions utilitaires ====================
 async def get_current_settings(user_id: int) -> dict:
-    """Récupère tous les paramètres actuels de l'utilisateur"""
     settings_dict = {
         "video_codec": await get_video_codec(user_id),
         "audio_codec": await get_audio_codec(user_id),
@@ -251,9 +239,7 @@ async def get_current_settings(user_id: int) -> dict:
         "threads": await get_threads(user_id),
         "hwaccel": await get_hwaccel(user_id),
         "subtitle_action": await get_subtitle_action(user_id),
-        "selected_subtitle_track": await get_setting(
-            user_id, "selected_subtitle_track"
-        ),
+        "selected_subtitle_track": await get_setting(user_id, "selected_subtitle_track"),
         "audio_track_action": await get_audio_track_action(user_id),
         "extensions": await get_extensions(user_id),
         "tune": await get_tune(user_id),
@@ -274,7 +260,6 @@ async def get_current_settings(user_id: int) -> dict:
     # Vérifier et corriger hwaccel si nécessaire
     available_accels = hw_accel_checker.get_available()
     current_hwaccel = settings_dict["hwaccel"]
-
     if current_hwaccel not in available_accels:
         await set_setting(user_id, "hwaccel", "none")
         settings_dict["hwaccel"] = "none"
@@ -284,25 +269,95 @@ async def get_current_settings(user_id: int) -> dict:
 
     return settings_dict
 
-def create_adjustment_kb(
-    setting_name: str, options: list, current_value: str
-) -> InlineKeyboardMarkup:
-    """Crée un clavier d'ajustement pour un paramètre avec callback_data optimisé"""
+
+def _sanitize_callback_token(value: str) -> str:
+    """Remplace les caractères problématiques pour callback_data"""
+    if value is None:
+        return ""
+    value = str(value)
+    return re.sub(r"[^A-Za-z0-9\-_.]", "_", value)
+
+
+def _resolve_setting_name_from_sanitized(sanitized: str) -> str:
+    """Résout le nom réel du setting à partir du token sanitizé.
+    Compare avec KNOWN_SETTING_NAMES et SETTING_NAME_MAP (clés et valeurs).
+    Retourne sanitized si aucune correspondance trouvée (on essaye de sauver avec ce nom).
+    """
+    if not sanitized:
+        return sanitized
+
+    # direct match
+    if sanitized in KNOWN_SETTING_NAMES:
+        return sanitized
+
+    # try to match by sanitizing known names
+    for name in KNOWN_SETTING_NAMES:
+        if _sanitize_callback_token(name) == sanitized:
+            return name
+
+    # also check SETTING_NAME_MAP keys and values
+    for short, long in SETTING_NAME_MAP.items():
+        if _sanitize_callback_token(short) == sanitized:
+            return long
+        if _sanitize_callback_token(long) == sanitized:
+            return long
+
+    # fallback: try common replacements
+    alt = sanitized.replace('-', '_')
+    for name in KNOWN_SETTING_NAMES:
+        if name == alt:
+            return name
+
+    return sanitized
+
+
+def _b64encode_value(val: str) -> str:
+    """Encode la valeur en base64 urlsafe sans padding pour callback_data"""
+    if val is None:
+        val = ""
+    b = val.encode("utf-8")
+    enc = base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+    return enc
+
+
+def _b64decode_value(enc: str) -> str:
+    """Decode la valeur base64 urlsafe, en ajoutant le padding si nécessaire"""
+    if enc is None:
+        return ""
+    # add padding
+    padding = 4 - (len(enc) % 4)
+    if padding and padding != 4:
+        enc += "=" * padding
+    try:
+        return base64.urlsafe_b64decode(enc.encode("utf-8")).decode("utf-8")
+    except Exception:
+        # fallback: return raw string if decode fails
+        return enc
+
+
+def create_adjustment_kb(setting_name: str, options: list, current_value: str) -> InlineKeyboardMarkup:
+    """
+    Crée un clavier d'ajustement pour un paramètre.
+    callback_data: s_<sanitized_setting>::<base64_urlsafe(value)>
+    On utilise '::' comme séparateur pour éviter les ambiguïtés avec les underscores.
+    """
     buttons = []
     row = []
-    short_name = SHORT_SETTING_MAP.get(setting_name, setting_name[:3])
+
+    safe_setting = _sanitize_callback_token(setting_name)
 
     for idx, option in enumerate(options):
-        # Mettre en évidence la valeur actuelle
-        prefix = "• " if option == current_value else ""
-        callback_data = f"s_{short_name}_{option.replace(' ', '_')}"
-
+        prefix = "• " if str(option) == str(current_value) else ""
+        safe_option_enc = _b64encode_value(str(option))
+        callback_data = f"s_{safe_setting}::{safe_option_enc}"
         row.append((f"{prefix}{option}", callback_data))
 
-        # Nouvelle ligne tous les 2-3 éléments
-        if (idx + 1) % 3 == 0 or idx == len(options) - 1:
+        if (idx + 1) % 3 == 0:
             buttons.append(row)
             row = []
+
+    if row:
+        buttons.append(row)
 
     buttons.append([("↩ ʀᴇᴛᴏᴜʀ", "settings")])
     return create_inline_kb(buttons)
@@ -310,7 +365,6 @@ def create_adjustment_kb(
 
 # ==================== Gestion de l'interface ====================
 async def show_setting(callback_query: CallbackQuery):
-    """Affiche le menu des paramètres avec les valeurs actuelles"""
     user_id = callback_query.from_user.id
     if not await if_user_exist(user_id):
         await add_user(user_id)
@@ -318,16 +372,16 @@ async def show_setting(callback_query: CallbackQuery):
     user = await get_or_create_user(user_id)
     settings_dict = await get_current_settings(user_id)
 
-    text = "⚙️ **sᴇᴛᴛɪɴɢs**\n\n"
-    text += f"▫️ **ᴜᴛɪʟɪsᴀᴛᴇᴜʀ:** `{user.first_name or user.user_id}`\n"
-    text += f"▫️ **ᴅᴇʀɴɪᴇʀᴇ ᴀᴄᴛɪᴠɪᴛᴇ́:** `{user.last_activity.strftime('%d/%m/%Y %H:%M') if user.last_activity else 'Jamais'}`\n"
-    text += f"▫️ **ɴʙ ᴄᴏᴍᴍᴀɴᴅᴇs:** `{user.command_count}`\n"
-    text += f"▫️ **ʟɪᴍɪᴛᴇ ᴊᴏᴜʀɴᴀʟɪᴇʀᴇ:** `{settings_dict['daily_limit']}/{settings_dict['max_file']}MB`\n\n"
+    text = "⚙️ **sᴇᴛᴛɪɴɢs**"
+    text += f"▫️ **ᴜᴛɪʟɪsᴀᴛᴇᴜʀ:** `{user.first_name or user.user_id}`"
+    text += f"▫️ **ᴅᴇʀɴɪᴇʀᴇ ᴀᴄᴛɪᴠɪᴛᴇ́:** `{user.last_activity.strftime('%d/%m/%Y %H:%M') if user.last_activity else 'Jamais'}`"
+    text += f"▫️ **ɴʙ ᴄᴏᴍᴍᴀɴᴅᴇs:** `{user.command_count}`"
+    text += f"▫️ **ʟɪᴍɪᴛᴇ ᴊᴏᴜʀɴᴀʟɪᴇʀᴇ:** `{settings_dict['daily_limit']}/{settings_dict['max_file']}MB`"
 
     kbs = create_inline_kb(
         [
             # Section Vidéo
-            [(" ↓↓ ᴘᴀʀᴀᴍᴇᴛʀᴇs �ᴠɪᴅᴇᴏ ↓↓ ", "none_btn")],
+            [(" ↓↓ ᴘᴀʀᴀᴍᴇᴛʀᴇs ᴠɪᴅᴇᴏ ↓↓ ", "none_btn")],
             [
                 (
                     f"ᴄᴏᴅᴇᴄ: {stylize_value(settings_dict['video_codec'])}",
@@ -343,12 +397,12 @@ async def show_setting(callback_query: CallbackQuery):
                 (f"ᴘʀᴇsᴇᴛ: {stylize_value(settings_dict['preset'])}", "set_preset"),
             ],
             [
-                (f"ᴘɪx ꜰᴍᴛ: {stylize_value(settings_dict['pix_fmt'])}", "setpix_fmt"),
+                (f"ᴘɪx ꜰᴍᴛ: {stylize_value(settings_dict['pix_fmt'])}", "set_pix_fmt"),
                 (f"ʜᴡᴀᴄᴄᴇʟ: {stylize_value(settings_dict['hwaccel'])}", "set_hwaccel"),
             ],
             [
                 (f"ᴛᴜɴᴇ: {stylize_value(settings_dict['tune'])}", "set_tune"),
-                (f"ᴀsᴘᴇᴄᴛ: {stylize_value(settings_dict['aspect'])}", "toggle_aspect"),
+                (f"ᴀsᴘᴇᴄᴛ: {stylize_value(settings_dict['aspect'])}", "set_aspect"),
             ],
             [
                 (f"ᴄᴀʙᴀᴄ: {stylize_value(settings_dict['cabac'])}", "toggle_cabac"),
@@ -363,7 +417,7 @@ async def show_setting(callback_query: CallbackQuery):
                 ),
                 (
                     f"ʙɪᴛʀᴀᴛᴇ: {stylize_value(settings_dict['audio_bitrate'])}",
-                    "setaudio_bitrate",
+                    "set_audio_bitrate",
                 ),
             ],
             [
@@ -379,7 +433,7 @@ async def show_setting(callback_query: CallbackQuery):
             [
                 (
                     f"ᴄʜᴀɴɴᴇʟs: {stylize_value(settings_dict['channels'])}",
-                    "setchannels",
+                    "set_channels",
                 ),
                 (
                     f"ᴛʜʀᴇᴀᴅs: {stylize_value(settings_dict['threads'])}",
@@ -402,7 +456,7 @@ async def show_setting(callback_query: CallbackQuery):
                 (f"sᴜʙs: {stylize_value(settings_dict['subtitles'])}", "toggle_subs"),
                 (
                     f"{stylize_value('Subs id:')} {stylize_value(settings_dict['selected_subtitle_track'])}",
-                    "setsubs_track",
+                    "set_subs_track",
                 ),
             ],
             # Section Autres paramètres
@@ -433,8 +487,8 @@ async def show_setting(callback_query: CallbackQuery):
         text, reply_markup=kbs, parse_mode=ParseMode.MARKDOWN
     )
 
+
 async def handle_callback_query(client: Client, callback_query: CallbackQuery):
-    """Handle callback queries from inline keyboards."""
     query_data = callback_query.data
     message = callback_query.message
     user_id = callback_query.from_user.id
@@ -450,7 +504,6 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
     try:
         if query_data == "close":
             await callback_query.message.delete()
-
             if message.reply_to_message:
                 try:
                     await message.reply_to_message.delete()
@@ -459,16 +512,16 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             return
 
         elif query_data == "help":
-            help_text = "📚 **ᴀɪᴅᴇ ᴇᴛ ᴄᴏᴍᴍᴀɴᴅᴇs**\n\n"
-            help_text += "➻ ` /encode ` : ᴇɴᴄᴏᴅᴀɢᴇ ᴠɪᴅᴇ́ᴏ\n"
-            help_text += "➻ ` /compress ` : ᴄᴏᴍᴘʀᴇssɪᴏɴ ᴠɪᴅᴇ́ᴏ\n"
-            help_text += "➻ ` /merge ` : ғᴜsɪᴏɴɴᴇʀ ᴅᴇs ᴠɪᴅᴇ́ᴏs\n"
-            help_text += "➻ ` /split ` : ᴅᴇ́ᴄᴏᴜᴘᴇʀ ᴜɴᴇ ᴠɪᴅᴇ́ᴏ\n"
-            help_text += "➻ ` /subs ` : ᴍᴀɴᴀɢᴇᴍᴇɴᴛ sᴏᴜs-ᴛɪᴛʀᴇs\n"
-            help_text += "➻ ` /chapters ` : ᴇ́ᴅɪᴛɪᴏɴ ᴅᴇs ᴄʜᴀᴘɪᴛʀᴇs\n"
-            help_text += "➻ ` /convert ` : ᴄᴏɴᴠᴇʀsɪᴏɴ ғᴏʀᴍᴀᴛ\n"
-            help_text += "➻ ` /leech ` : ᴛᴇ́ʟᴇ́ᴄʜᴀʀɢᴇᴍᴇɴᴛ ᴜʀʟ\n"
-            help_text += "➻ ` /encode_uri ` : ᴍᴀɴɪᴘᴜʟᴀᴛɪᴏɴ ᴜʀʟ\n\n"
+            help_text = "📚 **ᴀɪᴅᴇ ᴇᴛ ᴄᴏᴍᴍᴀɴᴅᴇs**"
+            help_text += "➻ ` /encode ` : ᴇɴᴄᴏᴅᴀɢᴇ ᴠɪᴅᴇ́ᴏ"
+            help_text += "➻ ` /compress ` : ᴄᴏᴍᴘʀᴇssɪᴏɴ ᴠɪᴅᴇ́ᴏ"
+            help_text += "➻ ` /merge ` : ғᴜsɪᴏɴɴᴇʀ ᴅᴇs ᴠɪᴅᴇ́ᴏs"
+            help_text += "➻ ` /split ` : ᴅᴇ́ᴄᴏᴜᴘᴇʀ ᴜɴᴇ ᴠɪᴅᴇ́ᴏ"
+            help_text += "➻ ` /subs ` : ᴍᴀɴᴀɢᴇᴍᴇɴᴛ sᴏᴜs-ᴛɪᴛʀᴇs"
+            help_text += "➻ ` /chapters ` : ᴇ́ᴅɪᴛɪᴏɴ ᴅᴇs ᴄʜᴀᴘɪᴛʀᴇs"
+            help_text += "➻ ` /convert ` : ᴄᴏɴᴠᴇʀsɪᴏɴ ғᴏʀᴍᴀᴛ"
+            help_text += "➻ ` /leech ` : ᴛᴇ́ʟᴇ́ᴄʜᴬʀɢᴇᴍᴇɴᴛ ᴜʀʟ"
+            help_text += "➻ ` /encode_uri ` : ᴍᴀɴɪᴘᴜʟᴀᴛɪᴏɴ ᴜʀʟ"
             help_text += "ᴘᴏᴜʀ ᴘʟᴜs ᴅ'ɪɴғᴏs : /about"
 
             kb = InlineKeyboardMarkup(
@@ -497,12 +550,12 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             )
 
         elif query_data == "status":
-            status_text = "📊 **sᴛᴀᴛᴜs ᴅᴜ ʙᴏᴛ**\n\n"
-            status_text += f"• ᴠᴇʀsɪᴏɴ : `{settings.ISOCODE_VERSION}`\n"
-            status_text += f"• ᴜᴘᴛɪᴍᴇ : `{get_uptime()}`\n"
+            status_text = "📊 **sᴛᴀᴛᴜs ᴅᴜ ʙᴏᴛ**"
+            status_text += f"• ᴠᴇʀsɪᴏɴ : `{settings.ISOCODE_VERSION}`"
+            status_text += f"• ᴜᴘᴛɪᴍᴇ : `{get_uptime()}`"
 
             try:
-                status_text += f"• ᴄʜᴀʀɢᴇ : `{psutil.cpu_percent()}%`\n"
+                status_text += f"• ᴄʜᴀʀɢᴇ : `{psutil.cpu_percent()}%`"
                 status_text += f"• ʀᴀᴍ : `{psutil.virtual_memory().percent}%`"
             except Exception as e:
                 logger.error(f"Erreur psutil: {e}")
@@ -516,17 +569,15 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             await show_setting(callback_query)
 
         elif query_data == "none_btn":
-            # Utiliser un message d'alerte édité au lieu de callback_query.answer()
             await callback_query.message.edit_text(
                 "Aucune action définie pour ce bouton",
-                reply_markup=callback_query.message.reply_markup
+                reply_markup=callback_query.message.reply_markup,
             )
 
         elif query_data.startswith("adjust_"):
             setting = query_data.replace("adjust_", "")
             current_value = await get_setting(user_id, setting)
 
-            # Détermine les options en fonction du paramètre
             if setting == "crf":
                 min_val, max_val, step = 0, 51, 2
                 options = [str(i) for i in range(min_val, max_val + 1, step)]
@@ -540,8 +591,8 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                 options = []
 
             kb = create_adjustment_kb(setting, options, str(current_value))
-            text = f"🔧 **Ajustement du paramètre:** `{setting}`\n"
-            text += f"▫️ **Valeur actuelle:** `{current_value}`\n\n"
+            text = f"🔧 **Ajustement du paramètre:** `{setting}`"
+            text += f"▫️ **Valeur actuelle:** `{current_value}`"
             text += "Sélectionnez une nouvelle valeur:"
 
             await message.edit_text(
@@ -549,30 +600,39 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             )
             return
 
-        # Gestion des sélections d'options avec callback_data optimisé
+        # Gestion des sélections d'options (callback_data: s_<sanitized_setting>::<b64(value)>)
         elif query_data.startswith("s_"):
-            parts = query_data.split("_", 2)
-            if len(parts) < 3:
-                # Utiliser un message d'erreur édité au lieu de callback_query.answer()
-                await callback_query.message.edit_text(
-                    "Format de commande invalide",
-                    reply_markup=callback_query.message.reply_markup
-                )
-                return
+            body = query_data[2:]
+            # On attend maintenant le séparateur '::' entre setting et valeur encodée
+            if "::" in body:
+                sanitized_setting, raw_enc_value = body.split("::", 1)
+                value = _b64decode_value(raw_enc_value)
+            else:
+                # Fallback (ancienne logique) — utile si d'anciens callback_data existent
+                last_underscore = body.rfind("_")
+                if last_underscore == -1:
+                    await callback_query.message.edit_text(
+                        "Format de commande invalide",
+                        reply_markup=callback_query.message.reply_markup,
+                    )
+                    return
 
-            short_name = parts[1]
-            value = parts[2].replace("_", " ")
-            setting_name = LONG_SETTING_MAP.get(short_name, short_name)
+                sanitized_setting = body[:last_underscore]
+                raw_value = body[last_underscore + 1 :]
+                value = raw_value.replace("_", " ")
 
-            # Vérification spéciale pour hwaccel
+            # Résoudre le nom réel du paramètre
+            setting_name = _resolve_setting_name_from_sanitized(sanitized_setting)
+
+            # verification spéciale pour hwaccel
             if setting_name == "hwaccel":
                 available_accels = hw_accel_checker.get_available()
                 if value not in available_accels:
-                    value = "none"
                     await callback_query.message.edit_text(
                         f"⚠️ Accélérateur '{value}' non disponible! Réglé sur 'none'.",
-                        reply_markup=callback_query.message.reply_markup
+                        reply_markup=callback_query.message.reply_markup,
                     )
+                    value = "none"
 
             # Conversion spéciale pour les valeurs numériques
             if setting_name in ["crf", "threads", "daily_limit", "max_file"]:
@@ -581,15 +641,26 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                 except ValueError:
                     await callback_query.message.edit_text(
                         "Valeur numérique invalide",
-                        reply_markup=callback_query.message.reply_markup
+                        reply_markup=callback_query.message.reply_markup,
                     )
                     return
 
+            # Gestion AudioCodec enum pour audio_codec
+            if setting_name == "audio_codec":
+                codec_enum = AudioCodec.normalized_name(value)
+                if codec_enum:
+                    await set_setting(user_id, setting_name, codec_enum.value)
+                else:
+                    await set_setting(user_id, setting_name, value)
+                await show_setting(callback_query)
+                return
+
+            # Sauvegarde normale (fonctionne aussi pour audio_track_action, aspect, ...)
             await set_setting(user_id, setting_name, value)
             await show_setting(callback_query)
             return
 
-        # Gestion des bascules (toggle)
+        # Toggles pour booléens
         elif query_data.startswith("toggle_"):
             setting_name = query_data.replace("toggle_", "")
             if setting_name == "uploaddoc":
@@ -598,129 +669,138 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                 db_field = "subtitle_action"
             elif setting_name == "normalize":
                 db_field = "normalize_audio"
+            elif setting_name == "hardsub":
+                db_field = "hardsub"
+            elif setting_name == "subs":
+                db_field = "subtitles"
+            elif setting_name == "metadata":
+                db_field = "metadata"
+            elif setting_name == "watermark":
+                db_field = "watermark"
+            elif setting_name == "cabac":
+                db_field = "cabac"
             else:
                 db_field = setting_name
+
             current_value = await get_setting(user_id, db_field)
             logger.info(
                 f"Toggle setting: {db_field} for user {user_id}, current value: {current_value}"
             )
-            new_value = not current_value
+            try:
+                new_value = not bool(current_value)
+            except Exception:
+                new_value = not current_value
             await set_setting(user_id, db_field, new_value)
             await show_setting(callback_query)
             return
 
-        # Gestion spéciale pour hwaccel
+        # Afficher sous-menu hwaccel
         elif query_data == "set_hwaccel":
             current = await get_hwaccel(user_id)
             available = hw_accel_checker.get_available()
             kb = create_adjustment_kb("hwaccel", available, current)
 
-            # Créer le texte informatif
-            text = "🚀 **Accélération matérielle (hwaccel)**\n\n"
-            text += "Utilise le matériel pour accélérer l'encodage.\n\n"
-            text += f"▫️ **Actuel:** `{current}`\n"
-            text += f"▫️ **Disponible sur cette machine:**\n"
-
-            # Ajouter des icônes pour chaque accélérateur
+            text = "🚀 **Accélération matérielle (hwaccel)**"
+            text += "Utilise le matériel pour accélérer l'encodage."
+            text += f"▫️ **Actuel:** `{current}`"
+            text += f"▫️ **Disponible sur cette machine:**"
             for accel in ["cuda", "vaapi", "dxva2", "qsv"]:
                 status = "✅" if accel in available else "❌"
-                text += f"  - {status} {accel.upper()}\n"
-
-            text += "\nSélectionnez une nouvelle valeur:"
+                text += f"  - {status} {accel.upper()}"
+            text += "Sélectionnez une nouvelle valeur:"
 
             await message.edit_text(
                 stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
             )
             return
 
+        # Ouvre sous-menus via set_<param>
         elif query_data.startswith("set_"):
             setting_key = query_data.replace("set_", "")
-
+            # Map short keys to real names if present
             setting_name = SETTING_NAME_MAP.get(setting_key, setting_key)
 
+            # cas spéciaux
+            if setting_name == "audio_bitrate":
+                codec = await get_audio_codec(user_id)
+                codec_enum = None
+                if isinstance(codec, AudioCodec):
+                    codec_enum = codec
+                else:
+                    codec_enum = AudioCodec.normalized_name(str(codec))
+
+                current = await get_audio_bitrate(user_id)
+                if codec_enum:
+                    options = codec_enum.supported_bitrates
+                else:
+                    options = ["64k", "96k", "128k", "192k", "256k", "320k"]
+
+                kb = create_adjustment_kb("audio_bitrate", options, current)
+                text = "🎵 **Débit audio (bitrate)**"
+                text += "Qualité du son - plus élevé = meilleure qualité"
+                text += f"▫️ **Codec:** `{codec}`"
+                text += f"▫️ **Actuel:** `{current}`"
+                text += "Options disponibles:"
+                await message.edit_text(
+                    stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                )
+                return
+
+            if setting_name == "pix_fmt" or setting_key == "pix_fmt":
+                current = await get_pix_fmt(user_id)
+                kb = create_adjustment_kb("pix_fmt", PIX_FMT_OPTIONS, current)
+                text = "🎨 **Format de pixel (pix_fmt)**"
+                text += "Ce paramètre contrôle le format de couleur utilisé dans la vidéo."
+                text += f"▫️ **Actuel:** `{current}`"
+                text += "Options disponibles:"
+                await message.edit_text(
+                    stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                )
+                return
+
+            if setting_name == "channels" or setting_key == "channels":
+                current = await get_channels(user_id)
+                kb = create_adjustment_kb("channels", CHANNEL_OPTIONS, current)
+                text = "🔊 **Configuration des canaux audio**"
+                text += "Détermine la configuration des haut-parleurs pour le son."
+                text += f"▫️ **Actuel:** `{current}`"
+                text += "Options disponibles:"
+                await message.edit_text(
+                    stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                )
+                return
+
+            if setting_key in ("subs_track", "set_subs_track", "selected_subtitle_track") or setting_name == "selected_subtitle_track":
+                current_track = await get_setting(user_id, "selected_subtitle_track")
+                options = [str(i) for i in range(1, 11)]
+                kb = create_adjustment_kb("selected_subtitle_track", options, str(current_track))
+                text = "📜 **Sélection de la piste de sous-titres**"
+                text += "Sélectionnez la piste de sous-titres à utiliser (pour l'extraction, l'incorporation ou le hardsub)."
+                text += f"▫️ **Piste actuelle:** `{current_track}`"
+                text += "Options disponibles:"
+                await message.edit_text(
+                    stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                )
+                return
+
+            # show selection menu for known cycle options (video_codec, audio_codec, subtitle_action, aspect...)
             if setting_name in SETTING_CYCLE_OPTIONS:
                 options = SETTING_CYCLE_OPTIONS[setting_name]
                 current_value = await get_setting(user_id, setting_name)
+                kb = create_adjustment_kb(setting_name, options, current_value)
 
-                try:
-                    idx = options.index(current_value)
-                    next_idx = (idx + 1) % len(options)
-                    new_value = options[next_idx]
-                except ValueError:
-                    new_value = options[0]
+                text = f"🔧 **{setting_name} — sélection**"
+                text += f"▫️ **Actuel:** `{current_value}`"
+                text += "Sélectionnez une nouvelle valeur:"
 
-                await set_setting(user_id, setting_name, new_value)
-                await show_setting(callback_query)
+                await message.edit_text(
+                    stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                )
             else:
                 await callback_query.message.edit_text(
                     "Paramètre non configuré",
-                    reply_markup=callback_query.message.reply_markup
+                    reply_markup=callback_query.message.reply_markup,
                 )
-
-        # Actions spéciales pour les paramètres complexes
-        elif query_data == "setpix_fmt":
-            current = await get_pix_fmt(user_id)
-            kb = create_adjustment_kb("pix_fmt", PIX_FMT_OPTIONS, current)
-            text = "🎨 **Format de pixel (pix_fmt)**\n\n"
-            text += (
-                "Ce paramètre contrôle le format de couleur utilisé dans la vidéo.\n"
-            )
-            text += f"▫️ **Actuel:** `{current}`\n\n"
-            text += "Options disponibles:"
-            await message.edit_text(
-                stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
-            )
-            return
-
-        elif query_data == "setchannels":
-            current = await get_channels(user_id)
-            kb = create_adjustment_kb("channels", CHANNEL_OPTIONS, current)
-            text = "🔊 **Configuration des canaux audio**\n\n"
-            text += "Détermine la configuration des haut-parleurs pour le son.\n"
-            text += f"▫️ **Actuel:** `{current}`\n\n"
-            text += "Options disponibles:"
-            await message.edit_text(
-                stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
-            )
-            return
-
-        elif query_data == "setaudio_bitrate":
-            codec = await get_audio_codec(user_id)
-            current = await get_audio_bitrate(user_id)
-
-            # Options spécifiques au codec
-            if codec == AudioCodec.OPUS:
-                options = ["32k", "64k", "96k", "128k", "192k", "256k"]
-            else:
-                options = ["64k", "96k", "128k", "192k", "256k", "320k"]
-
-            kb = create_adjustment_kb("audio_bitrate", options, current)
-            text = "🎵 **Débit audio (bitrate)**\n\n"
-            text += "Qualité du son - plus élevé = meilleure qualité\n"
-            text += f"▫️ **Codec:** `{codec}`\n"
-            text += f"▫️ **Actuel:** `{current}`\n\n"
-            text += "Options disponibles:"
-            await message.edit_text(
-                stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
-            )
-            return
-
-        elif query_data == "setsubs_track":
-            current_track = await get_setting(user_id, "selected_subtitle_track")
-            options = [str(i) for i in range(1, 11)]  # Pistes 1 à 10
-
-            kb = create_adjustment_kb(
-                "selected_subtitle_track", options, str(current_track)
-            )
-
-            text = "📜 **Sélection de la piste de sous-titres**\n\n"
-            text += "Sélectionnez la piste de sous-titres à utiliser (pour l'extraction, l'incorporation ou le hardsub).\n"
-            text += f"▫️ **Piste actuelle:** `{current_track}`\n\n"
-            text += "Options disponibles:"
-
-            await message.edit_text(
-                stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
-            )
             return
 
         elif query_data == "start":
@@ -728,32 +808,30 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             kb = create_inline_kb(
                 [
                     [("🛠️ ᴀɪᴅᴇ", "help"), ("❤️‍🩹 ᴀ ᴘʀᴏᴘᴏs", "about")],
-                    [("⚙️ ᴘᴀʀᴀᴍᴇ̀ᴛʀᴇs", "settings"), ("📊 sᴛᴀᴛᴜs", "status")]
+                    [("⚙️ ᴘᴀʀᴀᴍᴇ̀ᴛʀᴇs", "settings"), ("📊 sᴛᴀᴛᴜs", "status")],
                 ]
             )
 
             kb1 = create_web_kb(
                 {
                     "📢 ᴍɪsᴇs ᴀ ᴊᴏᴜʀs": "https://t.me/hyoshcoder/",
-                    "💬 sᴜᴘᴘᴏʀᴛ": "https://t.me/hyoshassistantbot"
+                    "💬 sᴜᴘᴘᴏʀᴛ": "https://t.me/hyoshassistantbot",
                 }
             )
 
-            kb2 = create_web_kb(
-                {"🧑‍💻 ᴅᴇᴠᴇʟᴏᴘᴇᴜʀ": "https://t.me/hyoshcoder/"}
-            )
+            kb2 = create_web_kb({"🧑‍💻 ᴅᴇᴠᴇʟᴏᴘᴇᴜʀ": "https://t.me/hyoshcoder/"})
 
             kbs = concat_kbs([kb1, kb, kb2, close_kb])
             await send_media(
-            client=client,
-            media_type="photo",
-            chat_id=message.chat.id,
-            media=MEDIA_MAP["start"],
-            caption=BotMessage.HOMME.format(mention=message.from_user.mention),
-            reply_markup=kbs,
-            parse_mode=ParseMode.HTML,
-            reply_to=message.id
-        )
+                client=client,
+                media_type="photo",
+                chat_id=message.chat.id,
+                media=MEDIA_MAP["start"],
+                caption=BotMessage.HOMME.format(mention=message.from_user.mention),
+                reply_markup=kbs,
+                parse_mode=ParseMode.HTML,
+                reply_to=message.id,
+            )
 
         elif query_data == "back_settings":
             await show_setting(callback_query)
@@ -762,7 +840,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
         else:
             await callback_query.message.edit_text(
                 "❌ Action non reconnue ou non implémentée",
-                reply_markup=callback_query.message.reply_markup
+                reply_markup=callback_query.message.reply_markup,
             )
             return
 
@@ -771,7 +849,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
         try:
             await callback_query.message.edit_text(
                 "❌ Erreur lors du traitement de la demande",
-                reply_markup=callback_query.message.reply_markup
+                reply_markup=callback_query.message.reply_markup,
             )
         except Exception:
             pass

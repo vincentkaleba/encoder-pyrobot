@@ -1,4 +1,6 @@
+import asyncio
 import os
+import shutil
 import time
 import math
 from pyrogram.enums import ParseMode
@@ -12,6 +14,35 @@ from isocode.utils.isoutils.ffmpeg import get_user_settings
 from isocode import logger, download_dir
 
 ALOED_EXTENSIONS = ["mp4", "mkv", "avi", "mov", "flv", "webm", "mpeg", "mpg"]
+
+MIN_DISK_FREE_PERCENT = 40
+
+can_download = True
+
+async def monitor_disk_space(path="/", interval=30):
+    """
+    Boucle asynchrone qui vérifie l'espace disque toutes les `interval` secondes.
+    Si l'espace libre descend en dessous de MIN_DISK_FREE_PERCENT, désactive les téléchargements.
+    """
+    global can_download
+    while True:
+        try:
+            usage = shutil.disk_usage(path)
+            free_percent = usage.free / usage.total * 100
+
+            if free_percent < MIN_DISK_FREE_PERCENT:
+                if can_download:
+                    logger.warning(f"⚠️ Espace disque faible ({free_percent:.2f}% libre). Téléchargements désactivés.")
+                can_download = False
+            else:
+                if not can_download:
+                    logger.info(f"✅ Espace disque suffisant ({free_percent:.2f}% libre). Téléchargements réactivés.")
+                can_download = True
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la vérification de l'espace disque: {e}")
+
+        await asyncio.sleep(interval)
 
 class DownloadProgress:
     """Classe pour suivre et afficher la progression du téléchargement"""
@@ -86,16 +117,26 @@ class DownloadProgress:
 async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
     user_id = message.from_user.id
     user = await get_or_create_user(user_id)
+    global can_download
+
+
 
     video = message.video or message.document
     if not video:
         return await send_msg(
             client,
             message.chat.id,
-            "❌ Aucun fichier vidéo trouvé dans le message.",
+            stylize_value("❌ Aucun fichier vidéo trouvé dans le message."),
             reply_to=message.id
         )
 
+    if not can_download:
+            return await send_msg(
+                client,
+                message.chat.id,
+                stylize_value("⚠️ Espace disque faible, téléchargement reporté, je vais le telecharcher plus tard."),
+                reply_to=message.id
+            )
     filename = video.file_name or f"video_{int(time.time())}.mp4"
     file_ext = filename.split('.')[-1].lower()
 
@@ -170,7 +211,7 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
         msg.id,
         stylize_value(
             f"✅ **Téléchargement réussi!**\n\n"
-            f"📁 `{os.path.basename(file_path)}`\n"  # Utiliser le nouveau nom
+            f"📁 `{os.path.basename(file_path)}`\n"
             f"📦 Taille: {file_size}\n"
             f"⏱ Durée: {math.floor(elapsed)}s\n\n"
             f"⏳ Ajout à la file d'encodage..."
@@ -196,7 +237,7 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
         msg.id,
         stylize_value(
             f"📥 **Vidéo ajoutée à la file d'attente**\n\n"
-            f"📁 `{os.path.basename(file_path)}`\n"  
+            f"📁 `{os.path.basename(file_path)}`\n"
             f"📦 Taille: {file_size}\n"
             f"🎬 Position: #{pos}\n"
             f"🔍 Suivre: /status_{task_id}"

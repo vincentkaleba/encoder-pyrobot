@@ -214,35 +214,48 @@ class FFmpegCommandBuilder:
         output_file: str,
         subtitle_path: Optional[str] = None
     ) -> List[str]:
-        """Build FFmpeg command based on user settings"""
+        """Construire la commande FFmpeg en fonction des paramètres utilisateur.
+
+        Gère :
+        - accélération matérielle
+        - mappage des pistes vidéo/audio/sous-titres
+        - encodage vidéo/audio (codec, crf, preset, pix_fmt, bitrate, channels)
+        - filtres vidéo (scale, setdar pour l'aspect, subtitles pour hardsub, watermark)
+        - threads
+        - sortie
+        """
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'error',
             '-progress', 'pipe:1', '-y'
         ]
 
-        # Hardware acceleration
+        # Accélération matérielle (si différente de 'none')
         hwaccel = user_settings.get('hwaccel', 'auto')
         if hwaccel != 'none':
             cmd.extend(['-hwaccel', hwaccel])
 
-        # Ajout de l'input file
+        # Fichier d'entrée
         cmd.extend(['-i', input_file])
 
-        # Détection des pistes
+        # Détection des pistes (vidéo, audio, sous-titres)
         has_video = await get_codec(input_file, channel='v:0')
         has_audio = await get_codec(input_file, channel='a:0')
         subtitle_streams = await list_subtitle_streams(input_file)
 
         if has_video:
+            # Mapper la première piste vidéo
             cmd.extend(['-map', '0:v:0?'])
         else:
             logger.warning("Aucune piste vidéo détectée dans le fichier source")
 
-        # Video codec
+        # Codec vidéo
         video_codec = VideoCodec(user_settings.get('video_codec', 'libx265'))
         cmd.extend(['-c:v', video_codec.ffmpeg_name])
 
-        # Video settings
+        # Construction d'une liste de filtres vidéo
+        vf_parts: List[str] = []
+
+        # Paramètres vidéo
         if video_codec != VideoCodec.COPY:
             # CRF
             crf = user_settings.get('crf', 22)
@@ -257,46 +270,49 @@ class FFmpegCommandBuilder:
             if tune != Tune.NONE:
                 cmd.extend(['-tune', tune.ffmpeg_name])
 
-            # Pixel format
+            # Format de pixel
             pix_fmt = user_settings.get('pix_fmt', 'yuv420p')
             cmd.extend(['-pix_fmt', pix_fmt])
 
-            # Resolution
+            # Résolution -> on ajoute un filtre scale
             resolution = Resolution(user_settings.get('resolution', 'original'))
             if resolution != Resolution.ORIGINAL:
-                cmd.extend(['-vf', f'scale={resolution.ffmpeg_name}'])
+                vf_parts.append(f"scale={resolution.ffmpeg_name}")
 
-        # CABAC (if applicable)
+        # CABAC pour h264/h265
         if user_settings.get('cabac', False) and video_codec in [VideoCodec.H264, VideoCodec.H265]:
             cmd.extend(['-coder', '1'])
 
-        # Audio settings
+        # -----------------------
+        # Réglages audio
+        # -----------------------
         audio_track_action = AudioTrackAction(user_settings.get('audio_track_action', 'first'))
         audio_codec = AudioCodec(user_settings.get('audio_codec', 'aac'))
 
         if audio_track_action != AudioTrackAction.NONE and has_audio:
-            # Audio mapping
             if audio_track_action == AudioTrackAction.ALL:
                 cmd.extend(['-map', '0:a?'])
             elif audio_track_action == AudioTrackAction.FIRST:
                 cmd.extend(['-map', '0:a:0?'])
             else:
-                track_num = int(audio_track_action.value.split('_')[1])
-                cmd.extend(['-map', f'0:a:{track_num - 1}?'])
+                try:
+                    track_num = int(audio_track_action.value.split('_')[1])
+                    cmd.extend(['-map', f'0:a:{track_num - 1}?'])
+                except Exception:
+                    cmd.extend(['-map', '0:a:0?'])
 
-            # Audio codec
+            # Encodage audio
             if audio_codec != AudioCodec.COPY:
                 cmd.extend(['-c:a', audio_codec.ffmpeg_name])
 
-                # Audio bitrate
+                # Bitrate audio
                 audio_bitrate = user_settings.get('audio_bitrate', '192k')
                 cmd.extend(['-b:a', audio_bitrate])
 
-                # Normalize audio
+                # Normalisation audio
                 if user_settings.get('normalize_audio', True):
                     cmd.extend(['-af', 'loudnorm'])
 
-                # Channels mapping
                 channels = user_settings.get('channels', 'stereo')
                 channel_mapping = {
                     "mono": "1",
@@ -305,21 +321,23 @@ class FFmpegCommandBuilder:
                     "5.1": "6",
                     "7.1": "8"
                 }
-                channels_value = channel_mapping.get(channels.lower(), "2")
+                channels_value = channel_mapping.get(str(channels).lower(), "2")
                 cmd.extend(['-ac', channels_value])
             else:
                 cmd.extend(['-c:a', 'copy'])
         else:
+            # Pas de piste audio -> supprimer l'audio
             cmd.extend(['-an'])
 
-        # Subtitles
+        # -----------------------
+        # Gestion des sous-titres
+        # -----------------------
         subtitle_action = SubtitleAction(user_settings.get('subtitle_action', 'embed'))
         selected_subtitle_track = user_settings.get('selected_subtitle_track')
 
         if subtitle_action != SubtitleAction.NONE and subtitle_streams:
             selected_global_idx = None
             try:
-                # Convertir le track sélectionné en index global
                 if selected_subtitle_track is not None:
                     selected_track = int(selected_subtitle_track)
                     if any(stream['index'] == selected_track for stream in subtitle_streams):
@@ -327,50 +345,55 @@ class FFmpegCommandBuilder:
             except (ValueError, TypeError):
                 pass
 
-            # Fallback sur la première piste si nécessaire
             if selected_global_idx is None:
                 selected_global_idx = subtitle_streams[0]['index']
 
             if subtitle_action == SubtitleAction.BURN and subtitle_path:
-                # Hardsub: appliquer via filtre vidéo
                 escaped_path = subtitle_path.replace(':', '\\\\:').replace("'", "\\\\'")
-                vf = f"subtitles='{escaped_path}'"
-
-                if '-vf' in cmd:
-                    vf_index = cmd.index('-vf') + 1
-                    cmd[vf_index] = f"{cmd[vf_index]},{vf}"
-                else:
-                    cmd.extend(['-vf', vf])
+                vf_parts.append(f"subtitles='{escaped_path}'")
             else:
-                # Embed ou copy: mapper la piste spécifique
                 cmd.extend(['-map', f'0:{selected_global_idx}?'])
-
                 if subtitle_action == SubtitleAction.EMBED:
                     cmd.extend(['-c:s', 'mov_text'])
                 elif subtitle_action == SubtitleAction.COPY:
                     cmd.extend(['-c:s', 'copy'])
         else:
+            # Pas de sous-titres -> désactiver
             cmd.extend(['-sn'])
+
+        # -----------------------
+        # ASPECT
+        # -----------------------
+        aspect = user_settings.get('aspect', 'original')
+        if aspect and aspect != 'original':
+            aspect_str = str(aspect).strip()
+            if ':' in aspect_str:
+                ratio = aspect_str.replace(':', '/')
+            else:
+                ratio = aspect_str
+            vf_parts.append(f"setdar={ratio}")
+
+        # -----------------------
+        # Watermark
+        # -----------------------
+        if user_settings.get('watermark', False):
+            watermark_filter = "subtitles='isocode/utils/extras/watermark.ass'"
+            vf_parts.append(watermark_filter)
+
+        if vf_parts:
+            joined_vf = ",".join(vf_parts)
+            cmd.extend(['-vf', joined_vf])
 
         # Threads
         threads = user_settings.get('threads', 0)
-        if threads > 0:
+        if threads and threads > 0:
             cmd.extend(['-threads', str(threads)])
 
-        # Watermark
-        if user_settings.get('watermark', False):
-            watermark_filter = "subtitles='isocode/utils/extras/watermark.ass'"
-
-            if '-vf' in cmd:
-                vf_index = cmd.index('-vf') + 1
-                cmd[vf_index] = f"{cmd[vf_index]},{watermark_filter}"
-            else:
-                cmd.extend(['-vf', watermark_filter])
-
-        # Output file
+        # Fichier de sortie
         cmd.append(output_file)
 
         return cmd
+
 
 async def get_user_settings(user_id: int) -> Dict[str, any]:
     """Get all user settings in one call"""
