@@ -223,7 +223,7 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
         'filepath': file_path,
         'message': message,
         'msg': msg,
-        'user_settings': await get_user_settings(user_id),
+        'user_settings': await get_user_settings(user),
         'client': client,
         'userbot': userbot
     }
