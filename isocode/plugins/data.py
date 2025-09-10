@@ -184,7 +184,7 @@ async def get_current_settings(user_id: int) -> dict:
         "channels": user.channels,
         "reframe": user.reframe,
         "daily_limit": user.daily_limit,
-        "max_file": user.max_file,
+        "max_file": user.max_file_size,
     }
 
     # Vérifier et corriger hwaccel si nécessaire
