@@ -434,6 +434,9 @@ async def get_user_settings_from_user(user: User) -> Dict[str, any]:
         "max_file": user.max_file_size,
     }
 
+
+get_user_settings =  get_user_settings_from_user
+
 async def encode_video(filepath: str, message, msg) -> str:
     """
     Fonction principale d'encodage vidéo avec FFmpeg.
