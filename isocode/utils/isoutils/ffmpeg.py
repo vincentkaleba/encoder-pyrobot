@@ -395,36 +395,44 @@ class FFmpegCommandBuilder:
         return cmd
 
 
-async def get_user_settings(user_id: int) -> Dict[str, any]:
-    """Get all user settings in one call"""
-    return {
-        "video_codec": await get_video_codec(user_id),
-        "audio_codec": await get_audio_codec(user_id),
-        "preset": await get_preset(user_id),
-        "crf": await get_crf(user_id),
-        "resolution": await get_resolution(user_id),
-        "audio_bitrate": await get_audio_bitrate(user_id),
-        "threads": await get_threads(user_id),
-        "hwaccel": await get_hwaccel(user_id),
-        "subtitle_action": await get_subtitle_action(user_id),
-        "selected_subtitle_track": await get_setting(user_id, "selected_subtitle_track"),
-        "audio_track_action": await get_audio_track_action(user_id),
-        "extensions": await get_extensions(user_id),
-        "tune": await get_tune(user_id),
-        "aspect": await get_aspect(user_id),
-        "cabac": await get_cabac(user_id),
-        "metadata": await get_metadata(user_id),
-        "watermark": await get_watermark(user_id),
-        "hardsub": await get_hardsub(user_id),
-        "subtitles": await get_subtitles(user_id),
-        "normalize_audio": await get_normalize_audio(user_id),
-        "pix_fmt": await get_pix_fmt(user_id),
-        "channels": await get_channels(user_id),
-        "reframe": await get_reframe(user_id),
-        "daily_limit": await get_daily_limit(user_id),
-        "max_file": await get_max_file(user_id),
-    }
+def enum_value(enum_class, value, default=None):
+    """Convertit une valeur str en Enum si nécessaire."""
+    if isinstance(value, enum_class):
+        return value.value
+    try:
+        return enum_class(value).value
+    except (ValueError, TypeError):
+        return default if default is not None else value
 
+async def get_user_settings_from_user(user: User) -> Dict[str, any]:
+    """Récupère tous les paramètres d'un utilisateur depuis l'objet User en gérant les enums stockés en str."""
+    return {
+        "video_codec": enum_value(VideoCodec, user.video_codec, "libx265"),
+        "audio_codec": enum_value(AudioCodec, user.audio_codec, "aac"),
+        "preset": enum_value(Preset, user.preset, "superfast"),
+        "crf": user.crf,
+        "resolution": enum_value(Resolution, user.resolution, "original"),
+        "audio_bitrate": user.audio_bitrate,
+        "threads": user.threads,
+        "hwaccel": enum_value(HWAccel, user.hwaccel, "auto"),
+        "subtitle_action": enum_value(SubtitleAction, user.subtitle_action, "embed"),
+        "selected_subtitle_track": user.selected_subtitle_track,
+        "audio_track_action": enum_value(AudioTrackAction, user.audio_track_action, "first"),
+        "extensions": enum_value(VideoFormat, user.extensions, "mkv"),
+        "tune": enum_value(Tune, user.tune, "film"),
+        "aspect": user.aspect,
+        "cabac": user.cabac,
+        "metadata": user.metadata,
+        "watermark": user.watermark,
+        "hardsub": user.hardsub,
+        "subtitles": user.subtitles,
+        "normalize_audio": user.normalize_audio,
+        "pix_fmt": user.pix_fmt,
+        "channels": user.channels,
+        "reframe": user.reframe,
+        "daily_limit": user.daily_limit,
+        "max_file": user.max_file_size,
+    }
 
 async def encode_video(filepath: str, message, msg) -> str:
     """
@@ -451,7 +459,7 @@ async def encode_video(filepath: str, message, msg) -> str:
     if await get_hardsub(user_id):
         subtitle_path = await extract_subs(filepath, msg, user)
 
-    user_settings = await get_user_settings(user_id)
+    user_settings = await get_user_settings_from_user(user) 
 
     command = await FFmpegCommandBuilder.build_command(
         user_settings,
