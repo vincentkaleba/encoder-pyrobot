@@ -48,7 +48,7 @@ def admin_filter(_, __, message: Message):
 def sudo_filter(_, __, message: Message):
     """Filtre pour les super-utilisateurs"""
     logger.debug(f"Admin: {message.from_user.id} - SUDO: {settings.SUDO_USERS}")
-    return str(message.from_user.id) in settings.SUDO_USERS
+    return message.from_user.id in settings.SUDO_USERS
 
 
 close_kb = create_inline_kb([[("↩ ʀᴇᴛᴏᴜʀ ", "start"), ("❌ ᴄʟᴏsᴇ", "close")]])
