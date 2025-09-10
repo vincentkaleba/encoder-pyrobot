@@ -1,8 +1,6 @@
-from pydantic import Field
+from pydantic import Field, validator
 from typing import List, Optional
 from pydantic_settings import BaseSettings
-
-import logging
 
 class Settings(BaseSettings):
     # BOT SETTINGS
@@ -20,7 +18,6 @@ class Settings(BaseSettings):
 
     # DATABASE
     MONGODB_URI: str
-
 
     # DIRECTORIES & URLS
     DRIVE_DIR: str = ""
@@ -53,13 +50,24 @@ class Settings(BaseSettings):
     # TORRENT DIRECT LINK
     TORRENT_DIRECT_LINK_LIMIT: int = 10 # in GB
 
-    # lOGGING
+    # LOGGING
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     LOG_FILE: Optional[str] = None
+
     # MISC
     ISOCODE_VERSION: str = "1.0.0"
     ISO_CODE: str = "fr"
+
+    # -----------------------
+    # Validators pour listes
+    @validator("AUTHORIZED_CHATS", "SUDO_USERS", "LOG_CHANNELS", pre=True)
+    def split_list(cls, v):
+        if not v: 
+            return []
+        if isinstance(v, str):
+            return [i.strip() for i in v.split(",") if i.strip()]
+        return v
 
     class Config:
         env_file = ".env"
