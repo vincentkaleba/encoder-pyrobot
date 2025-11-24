@@ -18,11 +18,65 @@ from isocode.utils.database.database import (
 from typing import Any, Dict, List, Union, Optional
 from enum import Enum
 import asyncio
+import time
+
+# Simple instrumentation counters to track DB access calls during benchmarks.
+# These are lightweight and in-memory only.
+_DB_ACCESS_COUNTER = 0
+
+def get_db_access_count() -> int:
+    """Return the number of tracked DB access calls since last reset."""
+    return _DB_ACCESS_COUNTER
+
+def reset_db_access_count() -> None:
+    """Reset the DB access counter to zero."""
+    global _DB_ACCESS_COUNTER
+    _DB_ACCESS_COUNTER = 0
+
+def _incr_db_access(n: int = 1) -> None:
+    global _DB_ACCESS_COUNTER
+    _DB_ACCESS_COUNTER += n
 
 
 async def get_database() -> Database:
     """Return a database instance with connection pooling"""
-    return Database(settings.MONGODB_URI, settings.SESSION)
+    # Singleton pattern: reuse the same Database instance across the app
+    # to avoid creating many AsyncIOMotorClient instances.
+    global _DB_INSTANCE, _DB_LOCK
+    try:
+        _DB_INSTANCE
+    except NameError:
+        _DB_INSTANCE = None
+        _DB_LOCK = asyncio.Lock()
+
+    if _DB_INSTANCE is None:
+        async with _DB_LOCK:
+            if _DB_INSTANCE is None:
+                _DB_INSTANCE = Database(settings.MONGODB_URI, settings.SESSION)
+    # Count this as a DB-access attempt (caller intends to use DB)
+    try:
+        _incr_db_access()
+    except Exception:
+        pass
+    return _DB_INSTANCE
+
+
+async def close_database():
+    """Close the global Database client if initialized."""
+    global _DB_INSTANCE
+    if '_DB_INSTANCE' in globals() and _DB_INSTANCE is not None:
+        try:
+            _DB_INSTANCE.close()
+        except Exception as e:
+            logger.error(f"Erreur fermeture DB: {e}")
+        finally:
+            _DB_INSTANCE = None
+
+
+        # Simple in-memory TTL cache for small system settings to reduce DB hits
+        # Keys: 'auth_chat', 'sudo', 'killed'
+        _SYSTEM_CACHE: dict = {}
+        _SYSTEM_CACHE_TTL = 30  # seconds
 
 
 # ==================== User Management ====================
@@ -63,6 +117,8 @@ async def delete_user(user_id: int):
 # ==================== User Settings ====================
 async def get_or_create_user(user_id: int) -> User:
     """Get user object with all settings"""
+    # Instrument and then delegate to DB layer
+    _incr_db_access()
     db = await get_database()
     return await db.get_or_create_user(user_id)
 
@@ -73,9 +129,10 @@ async def update_user(user: User):
     await db.update_user(user)
 
 
-async def get_or_create_user_settings(user_id: int) -> Dict[str, Any]:
-    """Get all settings for a user as a dictionary"""
-    user = await get_or_create_user(user_id)
+async def get_or_create_user_settings(user_id: int, user: Optional[User] = None) -> Dict[str, Any]:
+    """Get all settings for a user as a dictionary. Accept an optional `user` to avoid DB call."""
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.model_dump(by_alias=True, exclude={"id"})
 
 
@@ -125,9 +182,10 @@ async def get_metadata(user_id: int) -> Optional[Dict[str, Any]]:
     return user.metadata if user.metadata else None
 
 
-async def get_setting(user_id: int, setting_name: str) -> Any:
-    """Get a specific setting for a user"""
-    user = await get_or_create_user(user_id)
+async def get_setting(user_id: int, setting_name: str, user: Optional[User] = None) -> Any:
+    """Get a specific setting for a user. Pass `user` to avoid a DB read."""
+    if user is None:
+        user = await get_or_create_user(user_id)
     return getattr(user, setting_name, None)
 
 
@@ -264,8 +322,9 @@ async def set_resize(user_id: int, value: bool):
 
 
 # Frame Rate
-async def get_frame(user_id: int) -> str:
-    user = await get_or_create_user(user_id)
+async def get_frame(user_id: int, user: Optional[User] = None) -> str:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.frame
 
 
@@ -274,8 +333,9 @@ async def set_frame(user_id: int, value: str):
 
 
 # Resolution
-async def get_resolution(user_id: int) -> Resolution:
-    user = await get_or_create_user(user_id)
+async def get_resolution(user_id: int, user: Optional[User] = None) -> Resolution:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.resolution
 
 
@@ -290,8 +350,9 @@ async def set_resolution(user_id: int, value: Union[str, Resolution]):
 
 
 # Video Bits
-async def get_bits(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_bits(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.bits
 
 
@@ -300,8 +361,9 @@ async def set_bits(user_id: int, value: bool):
 
 
 # Subtitles
-async def get_subtitles(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_subtitles(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.subtitles
 
 
@@ -310,8 +372,9 @@ async def set_subtitles(user_id: int, value: bool):
 
 
 # Sample Rate
-async def get_samplerate(user_id: int) -> str:
-    user = await get_or_create_user(user_id)
+async def get_samplerate(user_id: int, user: Optional[User] = None) -> str:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.sample
 
 
@@ -320,13 +383,15 @@ async def set_samplerate(user_id: int, value: str):
 
 
 # File Extensions
-async def get_extensions(user_id: int) -> VideoFormat:
-    user = await get_or_create_user(user_id)
+async def get_extensions(user_id: int, user: Optional[User] = None) -> VideoFormat:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.extensions
 
 # Video Codec
-async def get_video_codec(user_id: int) -> VideoCodec:
-    user = await get_or_create_user(user_id)
+async def get_video_codec(user_id: int, user: Optional[User] = None) -> VideoCodec:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.video_codec
 
 async def set_video_codec(user_id: int, value: Union[str, VideoCodec]):
@@ -350,8 +415,9 @@ async def set_extensions(user_id: int, value: Union[str, VideoFormat]):
 
 
 # Bit Rate
-async def get_bitrate(user_id: int) -> str:
-    user = await get_or_create_user(user_id)
+async def get_bitrate(user_id: int, user: Optional[User] = None) -> str:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.bitrate
 
 
@@ -360,8 +426,9 @@ async def set_bitrate(user_id: int, value: str):
 
 
 # Reframe
-async def get_reframe(user_id: int) -> str:
-    user = await get_or_create_user(user_id)
+async def get_reframe(user_id: int, user: Optional[User] = None) -> str:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.reframe
 
 
@@ -370,8 +437,9 @@ async def set_reframe(user_id: int, value: str):
 
 
 # Audio Codec
-async def get_audio_codec(user_id: int) -> AudioCodec:
-    user = await get_or_create_user(user_id)
+async def get_audio_codec(user_id: int, user: Optional[User] = None) -> AudioCodec:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.audio_codec
 
 
@@ -384,14 +452,16 @@ async def set_audio_codec(user_id: int, value: Union[str, AudioCodec]):
         )
     await set_setting(user_id, "audio_codec", value)
 
-async def get_audio_track_action(user_id: int) -> AudioTrackAction:
-    user = await get_or_create_user(user_id)
+async def get_audio_track_action(user_id: int, user: Optional[User] = None) -> AudioTrackAction:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.audio_track_action
 
 
 # Audio Channels
-async def get_channels(user_id: int) -> str:
-    user = await get_or_create_user(user_id)
+async def get_channels(user_id: int, user: Optional[User] = None) -> str:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.channels
 
 
@@ -400,8 +470,9 @@ async def set_channels(user_id: int, value: str):
 
 
 # Metadata Watermark
-async def get_metadata_w(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_metadata_w(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.metadata
 
 
@@ -410,8 +481,9 @@ async def set_metadata_w(user_id: int, value: bool):
 
 
 # Watermark
-async def get_watermark(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_watermark(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.watermark
 
 
@@ -420,8 +492,9 @@ async def set_watermark(user_id: int, value: bool):
 
 
 # Preset
-async def get_preset(user_id: int) -> Preset:
-    user = await get_or_create_user(user_id)
+async def get_preset(user_id: int, user: Optional[User] = None) -> Preset:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.preset
 
 
@@ -432,8 +505,9 @@ async def set_preset(user_id: int, value: Union[str, Preset]):
 
 
 # Hard Sub
-async def get_hardsub(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_hardsub(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.hardsub
 
 
@@ -442,8 +516,9 @@ async def set_hardsub(user_id: int, value: bool):
 
 
 # HEVC (Note: This is now replaced by video_codec, but kept for backward compatibility)
-async def get_hevc(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_hevc(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.video_codec == VideoCodec.H265
 
 
@@ -454,8 +529,9 @@ async def set_hevc(user_id: int, value: bool):
 
 
 # Tune
-async def get_tune(user_id: int) -> Tune:
-    user = await get_or_create_user(user_id)
+async def get_tune(user_id: int, user: Optional[User] = None) -> Tune:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.tune
 
 
@@ -466,8 +542,9 @@ async def set_tune(user_id: int, value: Union[str, Tune]):
 
 
 # CABAC
-async def get_cabac(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_cabac(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.cabac
 
 
@@ -476,8 +553,9 @@ async def set_cabac(user_id: int, value: bool):
 
 
 # Aspect Ratio
-async def get_aspect(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_aspect(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.aspect
 
 
@@ -486,8 +564,9 @@ async def set_aspect(user_id: int, value: bool):
 
 
 # Google Drive
-async def get_drive(user_id: int) -> bool:
-    user = await get_or_create_user(user_id)
+async def get_drive(user_id: int, user: Optional[User] = None) -> bool:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.drive
 
 
@@ -496,8 +575,9 @@ async def set_drive(user_id: int, value: bool):
 
 
 # CRF (Quality Factor)
-async def get_crf(user_id: int) -> int:
-    user = await get_or_create_user(user_id)
+async def get_crf(user_id: int, user: Optional[User] = None) -> int:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.crf
 
 
@@ -506,8 +586,9 @@ async def set_crf(user_id: int, value: int):
 
 
 # subs_id (Subtitles ID)
-async def get_subs_id(user_id: int) -> int:
-    user = await get_or_create_user(user_id)
+async def get_subs_id(user_id: int, user: Optional[User] = None) -> int:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.subs_id
 
 
@@ -516,8 +597,9 @@ async def set_subs_id(user_id: int, value: int):
 
 
 # Audio Bitrate
-async def get_audio_bitrate(user_id: int) -> str:
-    user = await get_or_create_user(user_id)
+async def get_audio_bitrate(user_id: int, user: Optional[User] = None) -> str:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.audio_bitrate
 
 
@@ -526,9 +608,17 @@ async def set_audio_bitrate(user_id: int, value: str):
 
 
 # Hardware Acceleration
-async def get_hwaccel(user_id: int) -> HWAccel:
-    user = await get_or_create_user(user_id)
+async def get_hwaccel(user_id: int, user: Optional[User] = None) -> HWAccel:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.hwaccel
+
+
+async def get_max_file(user_id: int, user: Optional[User] = None) -> int:
+    """Get maximum file size setting for a user."""
+    if user is None:
+        user = await get_or_create_user(user_id)
+    return getattr(user, 'max_file_size', getattr(user, 'max_file', 2000))
 
 
 async def set_hwaccel(user_id: int, value: Union[str, HWAccel]):
@@ -538,8 +628,9 @@ async def set_hwaccel(user_id: int, value: Union[str, HWAccel]):
 
 
 # Threads
-async def get_threads(user_id: int) -> int:
-    user = await get_or_create_user(user_id)
+async def get_threads(user_id: int, user: Optional[User] = None) -> int:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.threads
 
 
@@ -548,8 +639,9 @@ async def set_threads(user_id: int, value: int):
 
 
 # Extra FFmpeg Arguments
-async def get_extra_args(user_id: int) -> str:
-    user = await get_or_create_user(user_id)
+async def get_extra_args(user_id: int, user: Optional[User] = None) -> str:
+    if user is None:
+        user = await get_or_create_user(user_id)
     return user.extra_args
 
 
@@ -560,38 +652,64 @@ async def set_extra_args(user_id: int, value: str):
 # ==================== System Settings ====================
 async def get_killed_status() -> bool:
     """Get system kill switch status"""
+    # Check cache
+    now = time.time()
+    cached = _SYSTEM_CACHE.get('killed')
+    if cached and cached[1] > now:
+        return cached[0]
+
     db = await get_database()
-    return await db.get_killed_status()
+    val = await db.get_killed_status()
+    _SYSTEM_CACHE['killed'] = (val, now + _SYSTEM_CACHE_TTL)
+    return val
 
 
 async def set_killed_status(status: bool):
     """Set system kill switch status"""
     db = await get_database()
     await db.set_killed_status(status)
+    # Update cache
+    _SYSTEM_CACHE['killed'] = (status, time.time() + _SYSTEM_CACHE_TTL)
 
 
 async def get_auth_chat() -> str:
     """Get authorized chat ID"""
+    now = time.time()
+    cached = _SYSTEM_CACHE.get('auth_chat')
+    if cached and cached[1] > now:
+        return cached[0]
+
     db = await get_database()
-    return await db.get_auth_chat()
+    val = await db.get_auth_chat()
+    _SYSTEM_CACHE['auth_chat'] = (val, now + _SYSTEM_CACHE_TTL)
+    return val
 
 
 async def set_auth_chat(chat_id: str):
     """Set authorized chat ID"""
     db = await get_database()
     await db.set_auth_chat(chat_id)
+    _SYSTEM_CACHE['auth_chat'] = (str(chat_id), time.time() + _SYSTEM_CACHE_TTL)
 
 
 async def get_sudo_users() -> str:
     """Get sudo users configuration"""
+    now = time.time()
+    cached = _SYSTEM_CACHE.get('sudo')
+    if cached and cached[1] > now:
+        return cached[0]
+
     db = await get_database()
-    return await db.get_sudo()
+    val = await db.get_sudo()
+    _SYSTEM_CACHE['sudo'] = (val, now + _SYSTEM_CACHE_TTL)
+    return val
 
 
 async def set_sudo_users(sudo_id: str):
     """Set sudo users"""
     db = await get_database()
     await db.set_sudo(sudo_id)
+    _SYSTEM_CACHE['sudo'] = (str(sudo_id), time.time() + _SYSTEM_CACHE_TTL)
 
 
 # ==================== Batch Operations ====================

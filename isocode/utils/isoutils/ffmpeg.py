@@ -7,6 +7,7 @@ import re
 import subprocess
 import time
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse, unquote
 from pyrogram.enums import ParseMode
 from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
@@ -90,7 +91,7 @@ async def list_subtitle_streams(filepath: str) -> list:
         return []
 
 
-async def extract_subs(filepath: str, msg, user: User) -> Optional[str]:
+async def extract_subs(filepath: str, msg, user_or_settings: "User | dict") -> Optional[str]:
     """Extract subtitles and handle fonts — version robuste."""
     subtitle_streams = await list_subtitle_streams(filepath)
     if not subtitle_streams:
@@ -99,7 +100,11 @@ async def extract_subs(filepath: str, msg, user: User) -> Optional[str]:
 
     output = os.path.join(encode_dir, f"{msg.id}.ass")
 
-    sub_track_str = await get_setting(user.user_id, "selected_subtitle_track")
+    # Support either a User object or a pre-fetched settings dict
+    if isinstance(user_or_settings, dict):
+        sub_track_str = user_or_settings.get('selected_subtitle_track')
+    else:
+        sub_track_str = getattr(user_or_settings, 'selected_subtitle_track', None)
     selected_track = None
     try:
         if sub_track_str is not None:
@@ -372,38 +377,49 @@ class FFmpegCommandBuilder:
 
         return cmd
 
-async def get_user_settings(user_id: int) -> Dict[str, any]:
-    """Get all user settings in one call"""
+async def get_user_settings(user_or_id: "User | int") -> Dict[str, any]:
+    """Get all user settings in one call.
+
+    Accept either a `User` instance (preferred) or a `user_id`.
+    When a `User` is provided, this avoids multiple DB roundtrips.
+    """
+    # If caller passed a user_id, fetch user once
+    if isinstance(user_or_id, int):
+        user = await get_or_create_user(user_or_id)
+    else:
+        user = user_or_id
+
+    # Build settings from the User object directly (no extra DB calls)
     return {
-        "video_codec": await get_video_codec(user_id),
-        "audio_codec": await get_audio_codec(user_id),
-        "preset": await get_preset(user_id),
-        "crf": await get_crf(user_id),
-        "resolution": await get_resolution(user_id),
-        "audio_bitrate": await get_audio_bitrate(user_id),
-        "threads": await get_threads(user_id),
-        "hwaccel": await get_hwaccel(user_id),
-        "subtitle_action": await get_subtitle_action(user_id),
-        "selected_subtitle_track": await get_setting(user_id, "selected_subtitle_track"),
-        "audio_track_action": await get_audio_track_action(user_id),
-        "extensions": await get_extensions(user_id),
-        "tune": await get_tune(user_id),
-        "aspect": await get_aspect(user_id),
-        "cabac": await get_cabac(user_id),
-        "metadata": await get_metadata(user_id),
-        "watermark": await get_watermark(user_id),
-        "hardsub": await get_hardsub(user_id),
-        "subtitles": await get_subtitles(user_id),
-        "normalize_audio": await get_normalize_audio(user_id),
-        "pix_fmt": await get_pix_fmt(user_id),
-        "channels": await get_channels(user_id),
-        "reframe": await get_reframe(user_id),
-        "daily_limit": await get_daily_limit(user_id),
-        "max_file": await get_max_file(user_id),
+        "video_codec": user.video_codec.ffmpeg_name if hasattr(user, 'video_codec') else 'libx265',
+        "audio_codec": user.audio_codec.ffmpeg_name if hasattr(user, 'audio_codec') else 'aac',
+        "preset": user.preset.ffmpeg_name if hasattr(user, 'preset') else 'medium',
+        "crf": getattr(user, 'crf', 22),
+        "resolution": getattr(user, 'resolution', Resolution.ORIGINAL).value,
+        "audio_bitrate": getattr(user, 'audio_bitrate', '192k'),
+        "threads": getattr(user, 'threads', 0),
+        "hwaccel": getattr(user, 'hwaccel', HWAccel.AUTO).ffmpeg_name if hasattr(user, 'hwaccel') else 'auto',
+        "subtitle_action": getattr(user, 'subtitle_action', SubtitleAction.EMBED).ffmpeg_name,
+        "selected_subtitle_track": getattr(user, 'selected_subtitle_track', None),
+        "audio_track_action": getattr(user, 'audio_track_action', AudioTrackAction.FIRST).ffmpeg_name,
+        "extensions": getattr(user, 'extensions', VideoFormat.MKV).value,
+        "tune": getattr(user, 'tune', Tune.NONE).ffmpeg_name,
+        "aspect": getattr(user, 'aspect', False),
+        "cabac": getattr(user, 'cabac', False),
+        "metadata": getattr(user, 'metadata', True),
+        "watermark": getattr(user, 'watermark', False),
+        "hardsub": getattr(user, 'hardsub', False),
+        "subtitles": getattr(user, 'subtitles', True),
+        "normalize_audio": getattr(user, 'normalize_audio', True),
+        "pix_fmt": getattr(user, 'pix_fmt', 'yuv420p'),
+        "channels": getattr(user, 'channels', '2'),
+        "reframe": getattr(user, 'reframe', '0'),
+        "daily_limit": getattr(user, 'daily_limit', 10),
+        "max_file": getattr(user, 'max_file_size', getattr(user, 'max_file', 2000)),
     }
 
 
-async def encode_video(filepath: str, message, msg) -> str:
+async def encode_video(filepath: str, message, msg, user_settings: Dict[str, any] = None, user_obj: User = None) -> str:
     """
     Fonction principale d'encodage vidéo avec FFmpeg.
     - Ajoute les sous-titres si activé.
@@ -411,29 +427,79 @@ async def encode_video(filepath: str, message, msg) -> str:
     - Gère l'encodage et la progression.
     """
     user_id = message.from_user.id
-    ex = await get_extensions(user_id)
-    path, _ = os.path.splitext(filepath)
-    name = os.path.basename(path)
+    user = None
 
-    user = await get_or_create_user(user_id)
-
+    # Determine extension either from provided settings, provided user object, or DB
+    if user_obj is not None:
+        user = user_obj
+        ex = getattr(user, 'extensions', VideoFormat.MKV).value
+    elif user_settings is not None:
+        ex = user_settings.get('extensions', VideoFormat.MKV.value)
+    else:
+        user = await get_or_create_user(user_id)
+        ex = getattr(user, 'extensions', VideoFormat.MKV).value
+    # If input is a URL, parse the path to derive a filename base
+    input_is_url = False
+    if isinstance(filepath, str) and filepath.startswith(('http://', 'https://')):
+        input_is_url = True
+        parsed = urlparse(filepath)
+        path = parsed.path or ''
+        name = os.path.splitext(os.path.basename(unquote(path)))[0] or f"remote_{int(time.time())}"
+    else:
+        path, _ = os.path.splitext(filepath)
+        name = os.path.basename(path)
     output_ext = ex.lower() if ex and ex.upper() in ['MP4', 'AVI'] else 'mkv'
-    output_filepath = os.path.join(encode_dir, f"{name}.{output_ext}")
+    # Prepare a task-local temporary output path and a final per-user output dir
+    final_user_dir = os.path.join(encode_dir, str(user_id))
+    os.makedirs(final_user_dir, exist_ok=True)
 
-    if not os.path.exists(filepath):
+    final_output_filepath = os.path.join(final_user_dir, f"{name}.{output_ext}")
+    # write to a .part temporary file in the same task dir as the input to keep atomic moves fast
+    # Use a temp name that preserves the real extension at the end so
+    # ffmpeg can infer the muxer from the file extension. Example:
+    #   name.part.mkv  -> final extension is .mkv
+    # Choose a temporary output path. For local inputs, use the task dir
+    # (same dir as input) for fast atomic moves. For URL inputs, write
+    # the temp file into the final user encode dir and then leave it
+    # in place (it's already in the final dir).
+    if input_is_url:
+        temp_output_filepath = os.path.join(final_user_dir, f"{name}.part.{output_ext}")
+    else:
+        temp_output_filepath = os.path.join(os.path.dirname(filepath), f"{name}.part.{output_ext}")
+
+    if not input_is_url and not os.path.exists(filepath):
         logger.error(f"Fichier introuvable après téléchargement : {filepath}")
         raise FileNotFoundError(f"Fichier non trouvé : {filepath}")
 
     subtitle_path = None
-    if await get_hardsub(user_id):
-        subtitle_path = await extract_subs(filepath, msg, user)
+    # Check for hard-sub configuration from user object or settings
+    hardsub_flag = None
+    if user is not None:
+        hardsub_flag = getattr(user, 'hardsub', False)
+    elif user_settings is not None:
+        hardsub_flag = user_settings.get('hardsub', False)
 
-    user_settings = await get_user_settings(user_id)
+    if hardsub_flag and not input_is_url:
+        # Pass either the user object or the settings dict to extract_subs
+        if user is not None:
+            subtitle_path = await extract_subs(filepath, msg, user)
+        else:
+            subtitle_path = await extract_subs(filepath, msg, user_settings)
+    elif hardsub_flag and input_is_url:
+        # Hard-sub extraction from a remote stream is not supported;
+        # skip hardsub for URL inputs unless the file is first downloaded.
+        logger.info("Hardsub ignored for remote input (stream/URL)")
+
+    # Build or reuse user_settings to avoid DB calls
+    if user_settings is None:
+        if user is None:
+            user = await get_or_create_user(user_id)
+        user_settings = await get_user_settings(user)
 
     command = await FFmpegCommandBuilder.build_command(
         user_settings,
         filepath,
-        output_filepath,
+        temp_output_filepath,
         subtitle_path
     )
 
@@ -468,11 +534,22 @@ async def encode_video(filepath: str, message, msg) -> str:
         logger.error(f"Erreur d'encodage : {error_msg}")
         raise Exception(f"Échec d'encodage FFmpeg : {error_msg}")
 
-    if not os.path.exists(output_filepath):
-        logger.error(f"Fichier manquant après encodage : {output_filepath}")
+    # Ensure the temp output exists, then atomically move to final location
+    if not os.path.exists(temp_output_filepath):
+        logger.error(f"Fichier manquant après encodage : {temp_output_filepath}")
         raise FileNotFoundError("Fichier de sortie introuvable après encodage")
 
-    return output_filepath
+    try:
+        # Atomic move/replace to final location
+        os.replace(temp_output_filepath, final_output_filepath)
+        logger.info(f"Fichier déplacé atomiquement vers: {final_output_filepath}")
+    except Exception as e:
+        logger.error(f"Erreur déplacement fichier encodé: {e}")
+        # Attempt fallback copy
+        shutil.copy2(temp_output_filepath, final_output_filepath)
+        os.remove(temp_output_filepath)
+
+    return final_output_filepath
 
 
 async def handle_progress(proc, msg, message, filepath, user_settings: dict):

@@ -1,31 +1,48 @@
 # Import Ubuntu
-FROM ubuntu:20.04
+FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Kolkata
+ENV TZ=UTC
 
-# Créer le dossier de travail
-RUN mkdir /app && chmod 777 /app
+# Préparer le répertoire de l'application
+RUN mkdir /app && chown 1000:1000 /app
 WORKDIR /app
 
-# Copier les fichiers de l'application
-COPY . .
+# Copier les sources en deux étapes pour profiter du cache Docker
+COPY requirements.txt /app/requirements.txt
+COPY . /app
 
-# Installer les dépendances système
-RUN apt update && apt install -y --no-install-recommends \
-    git wget curl busybox python3 python3-pip \
-    p7zip-full p7zip-rar unzip mkvtoolnix ffmpeg \
-    build-essential python3-dev libxml2-dev libxslt1-dev \
+# Installer dépendances système et utilitaires (FFmpeg inclus)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        wget \
+        curl \
+        python3 \
+        python3-pip \
+        python3-venv \
+        p7zip-full \
+        unzip \
+        mkvtoolnix \
+        ffmpeg \
+        build-essential \
+        libxml2-dev \
+        libxslt1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Installer les dépendances Python
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Mettre à jour pip et installer les dépendances Python (no-cache)
+RUN python3 -m pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r /app/requirements.txt
 
-# Rendre le script extract exécutable
-# RUN chmod +x extract
+# Créer un utilisateur non-root pour exécuter l'application
+RUN useradd -m -u 1000 -s /bin/bash isocode \
+    && chown -R isocode:isocode /app
 
-# Exposer le port
+USER isocode
+
+# Exposer (optionnel) - le bot n'ouvre pas de port HTTP par défaut
 EXPOSE 8080
 
-# Commande de démarrage
+# Lancer le bot via run.sh (doit être exécutable)
 CMD ["bash", "run.sh"]

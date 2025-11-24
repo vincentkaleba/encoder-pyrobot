@@ -1,5 +1,5 @@
-from pydantic import Field
-from typing import List, Optional
+from pydantic import Field, model_validator
+from typing import List, Optional, Union
 from pydantic_settings import BaseSettings
 
 import logging
@@ -31,13 +31,13 @@ class Settings(BaseSettings):
 
     # PERMISSIONS & USERS
     OWNER_ID: str
-    SUDO_USERS: List[str] = Field(default_factory=list)
+    SUDO_USERS: List[Union[str, int]] = Field(default_factory=list)
 
     # LOGGING & AUTH
     LOG_DIR: str = ""
-    LOG_CHANNELS: List[str] = Field(default_factory=list)
+    LOG_CHANNELS: List[Union[str, int]] = Field(default_factory=list)
     DUMP_CHAT: Optional[str] = None
-    AUTHORIZED_CHATS: List[str] = Field(default_factory=list)
+    AUTHORIZED_CHATS: List[Union[str, int]] = Field(default_factory=list)
 
     # AUTO DELETE
     AUTODELETE_MESSAGES: bool = False
@@ -60,6 +60,60 @@ class Settings(BaseSettings):
     # MISC
     ISOCODE_VERSION: str = "1.0.0"
     ISO_CODE: str = "fr"
+
+    # ENCODER
+    ENCODER_MAX_CONCURRENT: int = 2
+
+    @model_validator(mode="before")
+    def _coerce_lists(cls, values: dict):
+        """Normalize env values for list fields into lists of strings.
+
+        Handles cases where the env provides JSON arrays, comma-separated
+        strings, single ints, or actual lists (from dotenv parsers).
+        """
+        import json
+
+        def ensure_list_of_str(key: str):
+            if key not in values:
+                return
+            v = values.get(key)
+            if isinstance(v, str):
+                # try JSON first (e.g. "[1,2]")
+                try:
+                    parsed = json.loads(v)
+                    v = parsed
+                except Exception:
+                    # fallback to comma separated
+                    v = [p.strip() for p in v.split(",") if p.strip()]
+            # now coerce to list of strings
+            if isinstance(v, (list, tuple)):
+                values[key] = [str(x) for x in v]
+            else:
+                values[key] = [str(v)]
+
+        for k in ("SUDO_USERS", "LOG_CHANNELS", "AUTHORIZED_CHATS"):
+            ensure_list_of_str(k)
+
+        return values
+
+    @model_validator(mode="after")
+    def _normalize_list_types(cls, model):
+        """Ensure the three list fields are always lists of strings after validation.
+
+        Some env parsing or settings loading can yield ints or mixed types; convert
+        them to strings so the rest of the code can rely on a consistent type.
+        """
+        for k in ("SUDO_USERS", "LOG_CHANNELS", "AUTHORIZED_CHATS"):
+            v = getattr(model, k, None)
+            if v is None:
+                continue
+            try:
+                normalized = [str(x) for x in v]
+            except Exception:
+                normalized = []
+            setattr(model, k, normalized)
+
+        return model
 
     class Config:
         env_file = ".env"

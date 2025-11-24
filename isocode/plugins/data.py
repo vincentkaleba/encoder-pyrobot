@@ -229,35 +229,36 @@ async def get_available_hwaccels() -> list:
 # ==================== Fonctions utilitaires ====================
 async def get_current_settings(user_id: int) -> dict:
     """Récupère tous les paramètres actuels de l'utilisateur"""
+    # Récupérer une seule fois l'objet User pour éviter de multiples lectures DB
+    user = await get_or_create_user(user_id)
+
     settings_dict = {
-        "video_codec": await get_video_codec(user_id),
-        "audio_codec": await get_audio_codec(user_id),
-        "preset": await get_preset(user_id),
-        "crf": await get_crf(user_id),
-        "resolution": await get_resolution(user_id),
-        "upload_as_doc": await get_upload_as_doc(user_id),
-        "audio_bitrate": await get_audio_bitrate(user_id),
-        "threads": await get_threads(user_id),
-        "hwaccel": await get_hwaccel(user_id),
-        "subtitle_action": await get_subtitle_action(user_id),
-        "selected_subtitle_track": await get_setting(
-            user_id, "selected_subtitle_track"
-        ),
-        "audio_track_action": await get_audio_track_action(user_id),
-        "extensions": await get_extensions(user_id),
-        "tune": await get_tune(user_id),
-        "aspect": await get_aspect(user_id),
-        "cabac": await get_cabac(user_id),
-        "metadata": await get_metadata(user_id),
-        "watermark": await get_watermark(user_id),
-        "hardsub": await get_hardsub(user_id),
-        "subtitles": await get_subtitles(user_id),
-        "normalize_audio": await get_normalize_audio(user_id),
-        "pix_fmt": await get_pix_fmt(user_id),
-        "channels": await get_channels(user_id),
-        "reframe": await get_reframe(user_id),
-        "daily_limit": await get_daily_limit(user_id),
-        "max_file": await get_max_file(user_id),
+        "video_codec": getattr(user, 'video_codec', None).ffmpeg_name if getattr(user, 'video_codec', None) else None,
+        "audio_codec": getattr(user, 'audio_codec', None).ffmpeg_name if getattr(user, 'audio_codec', None) else None,
+        "preset": getattr(user, 'preset', None).ffmpeg_name if getattr(user, 'preset', None) else None,
+        "crf": getattr(user, 'crf', 22),
+        "resolution": getattr(user, 'resolution', None).value if getattr(user, 'resolution', None) else None,
+        "upload_as_doc": getattr(user, 'upload_as_doc', False),
+        "audio_bitrate": getattr(user, 'audio_bitrate', '192k'),
+        "threads": getattr(user, 'threads', 0),
+        "hwaccel": getattr(user, 'hwaccel', None).ffmpeg_name if getattr(user, 'hwaccel', None) else None,
+        "subtitle_action": getattr(user, 'subtitle_action', None).ffmpeg_name if getattr(user, 'subtitle_action', None) else None,
+        "selected_subtitle_track": getattr(user, 'selected_subtitle_track', None),
+        "audio_track_action": getattr(user, 'audio_track_action', None).ffmpeg_name if getattr(user, 'audio_track_action', None) else None,
+        "extensions": getattr(user, 'extensions', None).value if getattr(user, 'extensions', None) else None,
+        "tune": getattr(user, 'tune', None).ffmpeg_name if getattr(user, 'tune', None) else None,
+        "aspect": getattr(user, 'aspect', False),
+        "cabac": getattr(user, 'cabac', False),
+        "metadata": getattr(user, 'metadata', True),
+        "watermark": getattr(user, 'watermark', False),
+        "hardsub": getattr(user, 'hardsub', False),
+        "subtitles": getattr(user, 'subtitles', True),
+        "normalize_audio": getattr(user, 'normalize_audio', True),
+        "pix_fmt": getattr(user, 'pix_fmt', 'yuv420p'),
+        "channels": getattr(user, 'channels', '2'),
+        "reframe": getattr(user, 'reframe', '0'),
+        "daily_limit": getattr(user, 'daily_limit', 10),
+        "max_file": getattr(user, 'max_file_size', getattr(user, 'max_file', 2000)),
     }
 
     # Vérifier et corriger hwaccel si nécessaire
@@ -432,6 +433,10 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
         await add_user(user_id)
         logger.info(f"Nouvel utilisateur enregistré: {user_id}")
 
+    # Précharger l'objet user et les settings pour éviter plusieurs appels DB
+    user = await get_or_create_user(user_id)
+    settings_dict = await get_current_settings(user_id)
+
     try:
         if query_data == "close":
             await callback_query.message.delete()
@@ -507,7 +512,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
 
         elif query_data.startswith("adjust_"):
             setting = query_data.replace("adjust_", "")
-            current_value = await get_setting(user_id, setting)
+            current_value = settings_dict.get(setting)
 
             # Détermine les options en fonction du paramètre
             if setting == "crf":
@@ -583,7 +588,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
                 db_field = "normalize_audio"
             else:
                 db_field = setting_name
-            current_value = await get_setting(user_id, db_field)
+            current_value = settings_dict.get(db_field)
             logger.info(
                 f"Toggle setting: {db_field} for user {user_id}, current value: {current_value}"
             )
@@ -597,7 +602,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
 
         # Gestion spéciale pour hwaccel
         elif query_data == "set_hwaccel":
-            current = await get_hwaccel(user_id)
+            current = settings_dict.get("hwaccel")
             available = await get_available_hwaccels()
             kb = create_adjustment_kb("hwaccel", available, current)
 
@@ -626,7 +631,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
 
             if setting_name in SETTING_CYCLE_OPTIONS:
                 options = SETTING_CYCLE_OPTIONS[setting_name]
-                current_value = await get_setting(user_id, setting_name)
+                current_value = settings_dict.get(setting_name)
 
                 try:
                     idx = options.index(current_value)
@@ -643,7 +648,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
 
         # Actions spéciales pour les paramètres complexes
         elif query_data == "setpix_fmt":
-            current = await get_pix_fmt(user_id)
+            current = settings_dict.get("pix_fmt")
             kb = create_adjustment_kb("pix_fmt", PIX_FMT_OPTIONS, current)
             text = "🎨 **Format de pixel (pix_fmt)**\n\n"
             text += (
@@ -657,7 +662,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             return
 
         elif query_data == "setchannels":
-            current = await get_channels(user_id)
+            current = settings_dict.get("channels")
             kb = create_adjustment_kb("channels", CHANNEL_OPTIONS, current)
             text = "🔊 **Configuration des canaux audio**\n\n"
             text += "Détermine la configuration des haut-parleurs pour le son.\n"
@@ -669,8 +674,8 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             return
 
         elif query_data == "setaudio_bitrate":
-            codec = await get_audio_codec(user_id)
-            current = await get_audio_bitrate(user_id)
+            codec = settings_dict.get("audio_codec")
+            current = settings_dict.get("audio_bitrate")
 
             # Options spécifiques au codec
             if codec == AudioCodec.OPUS:
@@ -690,7 +695,7 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             return
 
         elif query_data == "setsubs_track":
-            current_track = await get_setting(user_id, "selected_subtitle_track")
+            current_track = settings_dict.get("selected_subtitle_track")
             options = [str(i) for i in range(1, 11)]  # Pistes 1 à 10
 
             kb = create_adjustment_kb(
