@@ -57,7 +57,7 @@ RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
 RUN python3.12 -m pip cache purge
 
 RUN mkdir -p /app/sessions \
-    && chown -R isocode:isocode /app/sessions
+    && chmod -R 777 /app/sessions
 
 # Exposer le port
 EXPOSE 8080
