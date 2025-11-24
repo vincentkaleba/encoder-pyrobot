@@ -39,6 +39,10 @@ RUN python3 -m pip install --upgrade pip setuptools wheel \
 RUN useradd -m -u 1000 -s /bin/bash isocode \
     && chown -R isocode:isocode /app
 
+# cree le dossier sessions a la racine du container
+RUN mkdir -p /app/sessions \
+    && chown -R isocode:isocode /app/sessions
+
 USER isocode
 
 # Exposer (optionnel) - le bot n'ouvre pas de port HTTP par défaut
