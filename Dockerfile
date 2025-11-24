@@ -1,52 +1,66 @@
-# Import Ubuntu
-FROM python:3.11-slim
+# Utiliser Ubuntu 22.04 comme base
+FROM ubuntu:22.04
 
+# Configuration de l'environnement
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONFAULTHANDLER=1
 
-# Préparer le répertoire de l'application
-RUN mkdir /app && chown 1000:1000 /app
-WORKDIR /app
-
-# Copier les sources en deux étapes pour profiter du cache Docker
-COPY requirements.txt /app/requirements.txt
-COPY . /app
-
-# Installer dépendances système et utilitaires (FFmpeg inclus)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        git \
-        wget \
-        curl \
-        python3 \
-        python3-pip \
-        python3-venv \
-        p7zip-full \
-        unzip \
-        mkvtoolnix \
-        ffmpeg \
-        build-essential \
-        libxml2-dev \
-        libxslt1-dev \
+# Mise à jour du système et installation des dépendances
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    build-essential \
+    zlib1g-dev \
+    libncurses5-dev \
+    libgdbm-dev \
+    libnss3-dev \
+    libssl-dev \
+    libreadline-dev \
+    libffi-dev \
+    libsqlite3-dev \
+    liblzma-dev \
+    wget \
+    curl \
+    git \
+    p7zip-full \
+    p7zip-rar \
+    unzip \
+    mkvtoolnix \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Mettre à jour pip et installer les dépendances Python (no-cache)
-RUN python3 -m pip install --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r /app/requirements.txt
+# Téléchargement et installation de Python 3.12.1
+RUN wget --no-check-certificate https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tar.xz && \
+    tar -xf Python-3.12.1.tar.xz && \
+    cd Python-3.12.1 && \
+    ./configure --enable-optimizations && \
+    make -j $(nproc) && \
+    make altinstall && \
+    cd .. && \
+    rm -rf Python-3.12.1 Python-3.12.1.tar.xz
 
-# Créer un utilisateur non-root pour exécuter l'application
-RUN useradd -m -u 1000 -s /bin/bash isocode \
-    && chown -R isocode:isocode /app
+# Création du dossier de travail
+RUN mkdir /app && chmod 777 /app
+WORKDIR /app
 
-# cree le dossier sessions a la racine du container
+# Installation de pip pour Python 3.12
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# Copie des fichiers de l'application
+COPY . .
+
+# Installation des dépendances Python
+RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
+
+# Nettoyage
+RUN python3.12 -m pip cache purge
+
 RUN mkdir -p /app/sessions \
     && chown -R isocode:isocode /app/sessions
 
-USER isocode
-
-# Exposer (optionnel) - le bot n'ouvre pas de port HTTP par défaut
+# Exposer le port
 EXPOSE 8080
 
-# Lancer le bot via run.sh (doit être exécutable)
-CMD ["bash", "run.sh"]
+# Commande de démarrage
+CMD ["python3.12", "-m", "isocode"]
