@@ -5,7 +5,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Installation des dépendances système de base + gnupg pour le PPA
+# Installation des dépendances système
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     gnupg \
@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-dev \
-    python3.12-distutils \
+    python3.12-venv \
     ffmpeg \
     mediainfo \
     mkvtoolnix \
@@ -32,7 +32,7 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 # Création du dossier de travail
 WORKDIR /app
 
-# Création des dossiers nécessaires avec les bons droits (TRÈS IMPORTANT pour l'erreur database)
+# Création des dossiers nécessaires avec les bons droits
 RUN mkdir -p /app/sessions /app/downloads /app/logs && chmod -R 777 /app
 
 # Installation des dépendances Python
