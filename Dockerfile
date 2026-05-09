@@ -5,9 +5,10 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Installation des dépendances système et de Python 3.12 via PPA
+# Installation des dépendances système de base + gnupg pour le PPA
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
+    gnupg \
     ca-certificates \
     curl \
     git \
@@ -31,7 +32,7 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 # Création du dossier de travail
 WORKDIR /app
 
-# Création des dossiers nécessaires avec les bons droits
+# Création des dossiers nécessaires avec les bons droits (TRÈS IMPORTANT pour l'erreur database)
 RUN mkdir -p /app/sessions /app/downloads /app/logs && chmod -R 777 /app
 
 # Installation des dépendances Python
