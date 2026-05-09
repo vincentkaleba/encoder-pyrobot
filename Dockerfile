@@ -5,11 +5,12 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Installation des dépendances système
+# Installation des dépendances système (build-essential est requis pour TgCrypto)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     gnupg \
     ca-certificates \
+    build-essential \
     curl \
     git \
     wget \
