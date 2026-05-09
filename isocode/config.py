@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     USERBOT_ENABLED: bool = True
     SESSION_DIR: str = "sessions"
 
+    def __init__(self, **values):
+        super().__init__(**values)
+        import os
+        if not os.path.exists(self.SESSION_DIR):
+            os.makedirs(self.SESSION_DIR, exist_ok=True)
+
     # DATABASE
     MONGODB_URI: str
 

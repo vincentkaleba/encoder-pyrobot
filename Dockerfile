@@ -1,67 +1,36 @@
-# Utiliser Ubuntu 22.04 comme base
-FROM ubuntu:22.04
+# Utiliser une image Python officielle 3.12 (plus stable et rapide que le build manuel)
+FROM python:3.12-slim-bookworm
 
 # Configuration de l'environnement
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=UTC
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONFAULTHANDLER=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-# Mise à jour du système et installation des dépendances
+# Installation des dépendances système
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    build-essential \
-    zlib1g-dev \
-    libncurses5-dev \
-    libgdbm-dev \
-    libnss3-dev \
-    libssl-dev \
-    libreadline-dev \
-    libffi-dev \
-    libsqlite3-dev \
-    liblzma-dev \
-    wget \
-    curl \
-    git \
-    p7zip-full \
-    p7zip-rar \
-    unzip \
-    mkvtoolnix \
     ffmpeg \
     mediainfo \
+    mkvtoolnix \
+    p7zip-full \
+    p7zip-rar \
+    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Téléchargement et installation de Python 3.12.1
-RUN wget --no-check-certificate https://www.python.org/ftp/python/3.12.1/Python-3.12.1.tar.xz && \
-    tar -xf Python-3.12.1.tar.xz && \
-    cd Python-3.12.1 && \
-    ./configure --enable-optimizations && \
-    make -j $(nproc) && \
-    make altinstall && \
-    cd .. && \
-    rm -rf Python-3.12.1 Python-3.12.1.tar.xz
-
 # Création du dossier de travail
-RUN mkdir /app && chmod 777 /app
 WORKDIR /app
 
-# Installation de pip pour Python 3.12
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+# Création des dossiers nécessaires avec les bons droits
+RUN mkdir -p /app/sessions /app/downloads /app/logs && chmod -R 777 /app
 
-# Copie des fichiers de l'application
+# Installation de pip et des dépendances
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copie du reste de l'application
 COPY . .
 
-# Installation des dépendances Python
-RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
-
-# Nettoyage
-RUN python3.12 -m pip cache purge
-
-RUN mkdir -p /app/sessions \
-    && chmod -R 777 /app/sessions
-
-# Exposer le port
+# Exposer le port si nécessaire
 EXPOSE 8080
 
 # Commande de démarrage
-CMD ["python3.12", "-m", "isocode"]
+CMD ["python", "-m", "isocode"]
