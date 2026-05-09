@@ -123,6 +123,7 @@ pydantic-settings
 Pygments
 PyJWT
 pymongo
+pymediainfo
 pyparsing
 Pyrogram
 pyromod

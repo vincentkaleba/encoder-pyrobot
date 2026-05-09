@@ -7,11 +7,11 @@ from isocode.utils.isoutils.dbutils import get_or_create_user
 from isocode.utils.isoutils.progress import stylize_value, humanbytes
 from isocode.utils.telegram.media import download_media
 from isocode.utils.telegram.message import send_msg, edit_msg
-from isocode.utils.isoutils.queue import queue_system
 from isocode.utils.isoutils.ffmpeg import get_user_settings
 from isocode import logger, download_dir
 
 ALOED_EXTENSIONS = ["mp4", "mkv", "avi", "mov", "flv", "webm", "mpeg", "mpg"]
+
 
 class DownloadProgress:
     """Classe pour suivre et afficher la progression du téléchargement"""
@@ -83,21 +83,22 @@ class DownloadProgress:
         self.last_downloaded = current
         self.last_percent = percent
 
+
 async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
     user_id = message.from_user.id
-    user = await get_or_create_user(user_id)  # Fetch user object
+    user = await get_or_create_user(user_id)
 
     video = message.video or message.document
 
-    # If there is no direct media, check for a URL in the message text/caption
+    # ── URL source (inchangé) ────────────────────────────────────────────────
     if not video:
         import re
+        from isocode.utils.isoutils.queue import queue_system
 
         text_src = getattr(message, 'text', None) or getattr(message, 'caption', '') or ''
         url_match = re.search(r"(https?://\S+)", text_src)
         if url_match:
             source_url = url_match.group(1).rstrip(')')
-            # derive a filename from the URL path
             from urllib.parse import urlparse, unquote
             parsed = urlparse(source_url)
             path_name = unquote(parsed.path or '')
@@ -121,7 +122,7 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
                 'user_settings': await get_user_settings(user),
                 'user': user,
                 'client': client,
-                'userbot': userbot
+                'userbot': userbot,
             }
 
             task_id = await queue_system.add_task(task_data)
@@ -139,7 +140,6 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
                 ),
                 parse=ParseMode.MARKDOWN
             )
-
             return task_id
 
         return await send_msg(
@@ -149,6 +149,7 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
             reply_to=message.id
         )
 
+    # ── Fichier Telegram ─────────────────────────────────────────────────────
     filename = video.file_name or f"video_{int(time.time())}.mp4"
     file_ext = filename.split('.')[-1].lower()
 
@@ -163,50 +164,74 @@ async def encoder_flow(message: Message, msg: Message, userbot, client) -> str:
             reply_to=message.id
         )
 
+    # Préparer les chemins
     user_dir = os.path.join(download_dir, str(user_id))
-    logger.info(f"Création du répertoire utilisateur : {user_dir}")
     os.makedirs(user_dir, exist_ok=True)
 
-    # Utiliser un répertoire temporaire par tâche pour isoler les fichiers
-    # et éviter de supprimer accidentellement le dossier racine de l'utilisateur.
     timestamp = int(time.time())
     task_dir = os.path.join(user_dir, f"task_{timestamp}")
     os.makedirs(task_dir, exist_ok=True)
 
-    # build a unique filename to avoid collisions. The actual download
-    # will be performed in the worker to centralize concurrency control.
     unique_filename = f"{user_id}_{timestamp}_{filename}"
+    file_path = os.path.join(task_dir, unique_filename)
 
-    # We enqueue only metadata here. The worker (_execute_task) will
-    # perform the download into `task_dir/unique_filename` and then
-    # continue to encoding. This centralizes downloads + encodes under
-    # queue concurrency limits.
-    task_data = {
-        'task_dir': task_dir,
-        'unique_filename': unique_filename,
-        'filename': filename,
-        'message': message,
-        'msg': msg,
-        'user_settings': await get_user_settings(user),  # Use the already fetched User object
-        'user': user,
-        'client': client,
-        'userbot': userbot
-    }
-
-    task_id = await queue_system.add_task(task_data)
-    pos = await queue_system.get_task_position(task_id)
-
+    # ── Téléchargement immédiat ───────────────────────────────────────────────
     await edit_msg(
         client,
         message.chat.id,
         msg.id,
-        stylize_value(
-            f"📥 **Vidéo ajoutée à la file d'attente**\n\n"
-            f"📁 `{filename}`\n"
-            f"🎬 Position: #{pos}\n"
-            f"🔍 Suivre: /status_{task_id}"
-        ),
-        parse=ParseMode.MARKDOWN
+        stylize_value(f"⬇️ **Téléchargement en cours...**\n\n📁 `{filename}`"),
+        parse=ParseMode.MARKDOWN,
     )
 
-    return task_id
+    progress = DownloadProgress(client, message.chat.id, msg.id, filename)
+
+    try:
+        downloaded = await download_media(
+            client=client,
+            message=message,
+            file_path=file_path,
+            progress_callback=progress.update,
+            userbot=userbot,
+        )
+
+        if not downloaded or not os.path.exists(file_path):
+            raise FileNotFoundError("Échec du téléchargement")
+
+        file_size = os.path.getsize(file_path)
+        logger.info(f"✅ Téléchargement terminé: {humanbytes(file_size)} → {file_path}")
+
+    except Exception as e:
+        logger.error(f"❌ Échec téléchargement pour encoder_flow: {e}")
+        await edit_msg(
+            client,
+            message.chat.id,
+            msg.id,
+            stylize_value(f"❌ Échec du téléchargement:\n`{e}`"),
+            parse=ParseMode.MARKDOWN,
+        )
+        return None
+
+    # ── Lancer la sélection interactive des pistes ───────────────────────────
+    task_data = {
+        'task_dir': task_dir,
+        'unique_filename': unique_filename,
+        'filename': filename,
+        'filepath': file_path,          # fichier déjà téléchargé
+        'message': message,
+        'msg': msg,
+        'user_settings': await get_user_settings(user),
+        'user': user,
+        'client': client,
+        'userbot': userbot,
+    }
+
+    from isocode.plugins.track_selection import start_track_selection
+    await start_track_selection(
+        client=client,
+        message=message,
+        status_msg=msg,
+        task_data=task_data,
+    )
+
+    return None  # La tâche sera enqueueée après confirmation de l'utilisateur

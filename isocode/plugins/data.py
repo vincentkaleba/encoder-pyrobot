@@ -11,32 +11,6 @@ from isocode.utils.isoutils.dbutils import (
     if_user_exist,
     add_user,
     set_setting,
-    get_setting,
-    get_resolution,
-    get_video_codec,
-    get_audio_codec,
-    get_preset,
-    get_crf,
-    get_upload_as_doc,
-    get_audio_bitrate,
-    get_threads,
-    get_hwaccel,
-    get_subtitle_action,
-    get_audio_track_action,
-    get_extensions,
-    get_tune,
-    get_aspect,
-    get_cabac,
-    get_metadata,
-    get_watermark,
-    get_hardsub,
-    get_subtitles,
-    get_normalize_audio,
-    get_pix_fmt,
-    get_channels,
-    get_reframe,
-    get_daily_limit,
-    get_max_file,
 )
 from isocode.utils.isoutils.progress import stylize_value
 import psutil
@@ -79,7 +53,6 @@ SHORT_SETTING_MAP = {
     "pix_fmt": "px",
     "channels": "ch",
     "audio_bitrate": "ab",
-    "selected_subtitle_track": "st",
 }
 
 LONG_SETTING_MAP = {v: k for k, v in SHORT_SETTING_MAP.items()}
@@ -101,21 +74,6 @@ SETTING_CYCLE_OPTIONS = {
     ],
     "hwaccel": ["none", "auto", "cuda", "vaapi", "dxva2", "qsv"],
     "audio_codec": ["aac", "opus", "mp3", "flac", "ac3", "copy"],
-    "audio_track_action": [
-        "all",
-        "first",
-        "none",
-        "track_2",
-        "track_3",
-        "track_4",
-        "track_5",
-        "track_6",
-        "track_7",
-        "track_8",
-        "track_9",
-        "track_10",
-    ],
-    "subtitle_action": ["none", "burn", "extract", "embed"],
     "extensions": ["mp4", "mkv", "webm", "mov"],
     "reframe": ["0", "24", "30", "48", "60"],
     "tune": [
@@ -131,10 +89,7 @@ SETTING_CYCLE_OPTIONS = {
 
 # Mapping des noms courts vers les vrais noms de paramètres
 SETTING_NAME_MAP = {
-    "subaction": "subtitle_action",
-    "audio_track": "audio_track_action",
     "format": "extensions",
-    "subs_track": "selected_subtitle_track",
 }
 
 # Cache pour la disponibilité des accélérateurs matériels
@@ -242,9 +197,6 @@ async def get_current_settings(user_id: int) -> dict:
         "audio_bitrate": getattr(user, 'audio_bitrate', '192k'),
         "threads": getattr(user, 'threads', 0),
         "hwaccel": getattr(user, 'hwaccel', None).ffmpeg_name if getattr(user, 'hwaccel', None) else None,
-        "subtitle_action": getattr(user, 'subtitle_action', None).ffmpeg_name if getattr(user, 'subtitle_action', None) else None,
-        "selected_subtitle_track": getattr(user, 'selected_subtitle_track', None),
-        "audio_track_action": getattr(user, 'audio_track_action', None).ffmpeg_name if getattr(user, 'audio_track_action', None) else None,
         "extensions": getattr(user, 'extensions', None).value if getattr(user, 'extensions', None) else None,
         "tune": getattr(user, 'tune', None).ffmpeg_name if getattr(user, 'tune', None) else None,
         "aspect": getattr(user, 'aspect', False),
@@ -358,42 +310,24 @@ async def show_setting(callback_query: CallbackQuery):
             ],
             [
                 (
-                    f"ᴘɪsᴛᴇ: {stylize_value(settings_dict['audio_track_action'])}",
-                    "set_audio_track",
-                ),
-                (
                     f"ɴᴏʀᴍ: {stylize_value(settings_dict['normalize_audio'])}",
                     "toggle_normalize",
                 ),
-            ],
-            [
                 (
                     f"ᴄʜᴀɴɴᴇʟs: {stylize_value(settings_dict['channels'])}",
                     "setchannels",
                 ),
+            ],
+            [
                 (
                     f"ᴛʜʀᴇᴀᴅs: {stylize_value(settings_dict['threads'])}",
                     "adjust_threads",
                 ),
             ],
-            # Section Sous-titres
+            # Section Sous-titres (la sélection se fait maintenant via l'interface interactive par tâche)
             [(" ↓↓ ᴘᴀʀᴀᴍᴇᴛʀᴇs sᴏᴜs-ᴛɪᴛʀᴇs ↓↓ ", "none_btn")],
             [
-                (
-                    f"ᴀᴄᴛɪᴏɴ: {stylize_value(settings_dict['subtitle_action'])}",
-                    "set_subaction",
-                ),
-                (
-                    f"ʜᴀʀᴅsᴜʙ: {stylize_value(settings_dict['hardsub'])}",
-                    "toggle_hardsub",
-                ),
-            ],
-            [
-                (f"sᴜʙs: {stylize_value(settings_dict['subtitles'])}", "toggle_subs"),
-                (
-                    f"{stylize_value('Subs id:')} {stylize_value(settings_dict['selected_subtitle_track'])}",
-                    "setsubs_track",
-                ),
+                (f"sᴜʙs ᴇᴍʙᴇᴅ: {stylize_value(settings_dict['subtitles'])}", "toggle_subs"),
             ],
             # Section Autres paramètres
             [(" ↓↓ ᴀᴜᴛʀᴇs ᴘᴀʀᴀᴍᴇᴛʀᴇs ↓↓ ", "none_btn")],
@@ -429,6 +363,14 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
     query_data = callback_query.data
     message = callback_query.message
     user_id = callback_query.from_user.id
+
+    # ── Délégation prioritaire aux callbacks de sélection de pistes ──────────
+    if query_data and query_data.startswith("trk_"):
+        from isocode.plugins.track_selection import handle_track_callback
+        await handle_track_callback(client, callback_query)
+        return
+    # ─────────────────────────────────────────────────────────────────────────
+
     if not await if_user_exist(user_id):
         await add_user(user_id)
         logger.info(f"Nouvel utilisateur enregistré: {user_id}")
@@ -694,23 +636,6 @@ async def handle_callback_query(client: Client, callback_query: CallbackQuery):
             )
             return
 
-        elif query_data == "setsubs_track":
-            current_track = settings_dict.get("selected_subtitle_track")
-            options = [str(i) for i in range(1, 11)]  # Pistes 1 à 10
-
-            kb = create_adjustment_kb(
-                "selected_subtitle_track", options, str(current_track)
-            )
-
-            text = "📜 **Sélection de la piste de sous-titres**\n\n"
-            text += "Sélectionnez la piste de sous-titres à utiliser (pour l'extraction, l'incorporation ou le hardsub).\n"
-            text += f"▫️ **Piste actuelle:** `{current_track}`\n\n"
-            text += "Options disponibles:"
-
-            await message.edit_text(
-                stylize_value(text), reply_markup=kb, parse_mode=ParseMode.MARKDOWN
-            )
-            return
 
         elif query_data == "start":
             await callback_query.message.delete()

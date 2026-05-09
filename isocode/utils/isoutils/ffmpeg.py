@@ -275,85 +275,94 @@ class FFmpegCommandBuilder:
         if user_settings.get('cabac', False) and video_codec in [VideoCodec.H264, VideoCodec.H265]:
             cmd.extend(['-coder', '1'])
 
-        # Audio settings
-        audio_track_action = AudioTrackAction(user_settings.get('audio_track_action', 'first'))
+        # Audio settings — driven by per-task track_selection
+        track_sel = user_settings.get('track_selection')
         audio_codec = AudioCodec(user_settings.get('audio_codec', 'aac'))
 
-        if audio_track_action != AudioTrackAction.NONE and has_audio:
-            # Audio mapping
-            if audio_track_action == AudioTrackAction.ALL:
-                cmd.extend(['-map', '0:a'])
-            elif audio_track_action == AudioTrackAction.FIRST:
-                cmd.extend(['-map', '0:a:0'])
-            else:
-                track_num = int(audio_track_action.value.split('_')[1])
-                cmd.extend(['-map', f'0:a:{track_num - 1}'])
+        if track_sel and has_audio:
+            audio_kept: list = track_sel.get('audio_kept', [])
+            audio_default: int | None = track_sel.get('audio_default')
 
-            # Audio codec
+            if audio_kept:
+                for idx in audio_kept:
+                    cmd.extend(['-map', f'0:{idx}'])
+
+                # Si le codec n'est pas copy, appliquer les options audio
+                if audio_codec != AudioCodec.COPY:
+                    cmd.extend(['-c:a', audio_codec.ffmpeg_name])
+
+                    audio_bitrate = user_settings.get('audio_bitrate', '192k')
+                    cmd.extend(['-b:a', audio_bitrate])
+
+                    if user_settings.get('normalize_audio', True):
+                        cmd.extend(['-af', 'loudnorm'])
+
+                    channels = user_settings.get('channels', 'stereo')
+                    channel_mapping = {
+                        "mono": "1", "stereo": "2",
+                        "2.1": "3", "5.1": "6", "7.1": "8"
+                    }
+                    cmd.extend(['-ac', channel_mapping.get(channels.lower(), "2")])
+                else:
+                    cmd.extend(['-c:a', 'copy'])
+
+                # Définir la piste par défaut via metadata
+                if audio_default is not None and audio_default in audio_kept:
+                    default_pos = audio_kept.index(audio_default)
+                    for i, _ in enumerate(audio_kept):
+                        disposition = 'default' if i == default_pos else '0'
+                        cmd.extend([f'-disposition:a:{i}', disposition])
+            else:
+                cmd.extend(['-an'])
+
+        elif has_audio:
+            # Fallback : garder toutes les pistes audio, pas de filtre spécifique
+            cmd.extend(['-map', '0:a'])
             if audio_codec != AudioCodec.COPY:
                 cmd.extend(['-c:a', audio_codec.ffmpeg_name])
-
-                # Audio bitrate
-                audio_bitrate = user_settings.get('audio_bitrate', '192k')
-                cmd.extend(['-b:a', audio_bitrate])
-
-                # Normalize audio
+                cmd.extend(['-b:a', user_settings.get('audio_bitrate', '192k')])
                 if user_settings.get('normalize_audio', True):
                     cmd.extend(['-af', 'loudnorm'])
-
-                # Channels mapping
-                channels = user_settings.get('channels', 'stereo')
-                channel_mapping = {
-                    "mono": "1",
-                    "stereo": "2",
-                    "2.1": "3",
-                    "5.1": "6",
-                    "7.1": "8"
-                }
-                channels_value = channel_mapping.get(channels.lower(), "2")
-                cmd.extend(['-ac', channels_value])
             else:
                 cmd.extend(['-c:a', 'copy'])
         else:
             cmd.extend(['-an'])
 
-        # Subtitles
-        subtitle_action = SubtitleAction(user_settings.get('subtitle_action', 'embed'))
-        selected_subtitle_track = user_settings.get('selected_subtitle_track')
+        # Subtitles — driven by per-task track_selection
+        if track_sel:
+            sub_kept: list = track_sel.get('sub_kept', [])
+            sub_default: int | None = track_sel.get('sub_default')
+            sub_hardsub: int | None = track_sel.get('sub_hardsub')
 
-        if subtitle_action != SubtitleAction.NONE and subtitle_streams:
-            selected_global_idx = None
-            try:
-                # Convertir le track sélectionné en index global
-                if selected_subtitle_track is not None:
-                    selected_track = int(selected_subtitle_track)
-                    if any(stream['index'] == selected_track for stream in subtitle_streams):
-                        selected_global_idx = selected_track
-            except (ValueError, TypeError):
-                pass
-
-            # Fallback sur la première piste si nécessaire
-            if selected_global_idx is None:
-                selected_global_idx = subtitle_streams[0]['index']
-
-            if subtitle_action == SubtitleAction.BURN and subtitle_path:
-                # Hardsub: appliquer via filtre vidéo
+            if sub_hardsub is not None and subtitle_path:
+                # Hardsub: incrustation via filtre vidéo
                 escaped_path = subtitle_path.replace(':', '\\\\:').replace("'", "\\\\'")
                 vf = f"subtitles='{escaped_path}'"
-
                 if '-vf' in cmd:
                     vf_index = cmd.index('-vf') + 1
                     cmd[vf_index] = f"{cmd[vf_index]},{vf}"
                 else:
                     cmd.extend(['-vf', vf])
-            else:
-                # Embed ou copy: mapper la piste spécifique
-                cmd.extend(['-map', f'0:{selected_global_idx}'])
+                cmd.extend(['-sn'])  # pas d'autres pistes subs embed
 
-                if subtitle_action == SubtitleAction.EMBED:
-                    cmd.extend(['-c:s', 'mov_text'])
-                elif subtitle_action == SubtitleAction.COPY:
-                    cmd.extend(['-c:s', 'copy'])
+            elif sub_kept:
+                for idx in sub_kept:
+                    cmd.extend(['-map', f'0:{idx}'])
+                cmd.extend(['-c:s', 'copy'])
+
+                # Définir la piste sous-titre par défaut
+                if sub_default is not None and sub_default in sub_kept:
+                    default_pos = sub_kept.index(sub_default)
+                    for i, _ in enumerate(sub_kept):
+                        disposition = 'default' if i == default_pos else '0'
+                        cmd.extend([f'-disposition:s:{i}', disposition])
+            else:
+                cmd.extend(['-sn'])
+
+        elif subtitle_streams:
+            # Fallback sans track_selection : embarquer la première piste
+            first_idx = subtitle_streams[0]['index']
+            cmd.extend(['-map', f'0:{first_idx}', '-c:s', 'copy'])
         else:
             cmd.extend(['-sn'])
 
@@ -399,16 +408,12 @@ async def get_user_settings(user_or_id: "User | int") -> Dict[str, any]:
         "audio_bitrate": getattr(user, 'audio_bitrate', '192k'),
         "threads": getattr(user, 'threads', 0),
         "hwaccel": getattr(user, 'hwaccel', HWAccel.AUTO).ffmpeg_name if hasattr(user, 'hwaccel') else 'auto',
-        "subtitle_action": getattr(user, 'subtitle_action', SubtitleAction.EMBED).ffmpeg_name,
-        "selected_subtitle_track": getattr(user, 'selected_subtitle_track', None),
-        "audio_track_action": getattr(user, 'audio_track_action', AudioTrackAction.FIRST).ffmpeg_name,
         "extensions": getattr(user, 'extensions', VideoFormat.MKV).value,
         "tune": getattr(user, 'tune', Tune.NONE).ffmpeg_name,
         "aspect": getattr(user, 'aspect', False),
         "cabac": getattr(user, 'cabac', False),
         "metadata": getattr(user, 'metadata', True),
         "watermark": getattr(user, 'watermark', False),
-        "hardsub": getattr(user, 'hardsub', False),
         "subtitles": getattr(user, 'subtitles', True),
         "normalize_audio": getattr(user, 'normalize_audio', True),
         "pix_fmt": getattr(user, 'pix_fmt', 'yuv420p'),
@@ -416,6 +421,8 @@ async def get_user_settings(user_or_id: "User | int") -> Dict[str, any]:
         "reframe": getattr(user, 'reframe', '0'),
         "daily_limit": getattr(user, 'daily_limit', 10),
         "max_file": getattr(user, 'max_file_size', getattr(user, 'max_file', 2000)),
+        # track_selection sera injecté par task_data après la sélection interactive
+        "track_selection": None,
     }
 
 
@@ -472,29 +479,24 @@ async def encode_video(filepath: str, message, msg, user_settings: Dict[str, any
         raise FileNotFoundError(f"Fichier non trouvé : {filepath}")
 
     subtitle_path = None
-    # Check for hard-sub configuration from user object or settings
-    hardsub_flag = None
-    if user is not None:
-        hardsub_flag = getattr(user, 'hardsub', False)
-    elif user_settings is not None:
-        hardsub_flag = user_settings.get('hardsub', False)
-
-    if hardsub_flag and not input_is_url:
-        # Pass either the user object or the settings dict to extract_subs
-        if user is not None:
-            subtitle_path = await extract_subs(filepath, msg, user)
-        else:
-            subtitle_path = await extract_subs(filepath, msg, user_settings)
-    elif hardsub_flag and input_is_url:
-        # Hard-sub extraction from a remote stream is not supported;
-        # skip hardsub for URL inputs unless the file is first downloaded.
-        logger.info("Hardsub ignored for remote input (stream/URL)")
 
     # Build or reuse user_settings to avoid DB calls
     if user_settings is None:
         if user is None:
             user = await get_or_create_user(user_id)
         user_settings = await get_user_settings(user)
+
+    # Inject track_selection from task_data context if provided externally
+    # (set by queue._execute_task before calling encode_video)
+    track_sel = user_settings.get('track_selection')
+    hardsub_idx = track_sel.get('sub_hardsub') if track_sel else None
+
+    if hardsub_idx is not None and not input_is_url:
+        # Extraire la piste sous-titre choisie pour l'incrustation
+        subtitle_path = await extract_subs(filepath, msg, {"selected_subtitle_track": hardsub_idx})
+    elif hardsub_idx is not None and input_is_url:
+        logger.info("Hardsub ignoré pour source URL (stream)")
+
 
     command = await FFmpegCommandBuilder.build_command(
         user_settings,

@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     mkvtoolnix \
     ffmpeg \
+    mediainfo \
     && rm -rf /var/lib/apt/lists/*
 
 # Téléchargement et installation de Python 3.12.1

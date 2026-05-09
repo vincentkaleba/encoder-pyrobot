@@ -354,10 +354,15 @@ class EncodingQueue:
                 raise ValueError("Données de tâche incomplètes")
 
             # Configuration du chemin de fichier
-            task_dir = task.data.get('task_dir') or os.path.dirname(task.data.get('filepath', ''))
-            os.makedirs(task_dir, exist_ok=True)
-            unique_filename = task.data.get('unique_filename') or task.data.get('filename')
-            file_path = os.path.join(task_dir, unique_filename)
+            # Si encoder_flow a déjà téléchargé le fichier, on utilise ce chemin directement
+            if task.data.get('filepath') and os.path.exists(task.data['filepath']):
+                file_path = task.data['filepath']
+                logger.info(f"✅ Fichier pré-téléchargé détecté: {file_path}")
+            else:
+                task_dir = task.data.get('task_dir') or os.path.dirname(task.data.get('filepath', ''))
+                os.makedirs(task_dir, exist_ok=True)
+                unique_filename = task.data.get('unique_filename') or task.data.get('filename')
+                file_path = os.path.join(task_dir, unique_filename)
 
             # Classe de progression pour le téléchargement avec vitesse et estimation
             class _DownloadProgress:
@@ -401,8 +406,8 @@ class EncodingQueue:
                         percent=percent,
                         total=total,
                         current=current,
-                        show_stats=False,  # On gère nous-même l'affichage
-                        show_time=False,   # On gère nous-même l'affichage du temps
+                        show_stats=False,
+                        show_time=False,
                         show_bar=True,
                         parse=ParseMode.HTML
                     )
@@ -412,6 +417,7 @@ class EncodingQueue:
 
             # Téléchargement du fichier si nécessaire
             if not os.path.exists(file_path):
+
                 source_url = task.data.get('source_url')
                 if source_url:
                     try:
@@ -505,15 +511,25 @@ class EncodingQueue:
                 file_size = os.path.getsize(file_path)
                 logger.info(f"✅ Fichier déjà existant: {humanbytes(file_size)}")
 
-            # Vérifier que le fichier a été correctement téléchargé
+            # Synchroniser le chemin dans task.data pour la suite (encode, cleanup, etc.)
+            task.data['filepath'] = file_path
+
+            # Vérifier que le fichier a été correctement téléchargé / pré-chargé
             if not os.path.exists(task.data['filepath']):
-                raise FileNotFoundError(f"Fichier non trouvé après téléchargement: {task.data['filepath']}")
+                raise FileNotFoundError(f"Fichier non trouvé: {task.data['filepath']}")
 
             file_size = os.path.getsize(task.data['filepath'])
             logger.info(f"📊 Taille du fichier à encoder: {humanbytes(file_size)}")
 
+
             # Mise à jour avant l'encodage
             await self._update_task_progress(task, "🎬 **Préparation de l'encodage...**")
+
+            # Injecter la sélection de pistes dans user_settings
+            user_settings = task.data.get('user_settings') or {}
+            track_selection = task.data.get('track_selection')
+            if track_selection:
+                user_settings['track_selection'] = track_selection
 
             # Exécution de la tâche d'encodage
             encode_start_time = time.time()
@@ -521,7 +537,7 @@ class EncodingQueue:
                 task.data['filepath'],
                 task.data['message'],
                 task.data['msg'],
-                user_settings=task.data.get('user_settings'),
+                user_settings=user_settings,
                 user_obj=task.data.get('user')
             )
             encode_time = time.time() - encode_start_time
