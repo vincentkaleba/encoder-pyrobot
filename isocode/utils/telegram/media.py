@@ -160,7 +160,7 @@ async def _upload_media_single(
                 width, height = await get_video_width_and_height(file_path)
                 if width == 0 or height == 0:
                     width, height = await get_ffmpeg_video_width_and_height(file_path)
-                
+
             except Exception as e:
                 logger.error(f"Erreur métadonnées vidéo: {e}")
 

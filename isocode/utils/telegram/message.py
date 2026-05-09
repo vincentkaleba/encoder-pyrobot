@@ -1,4 +1,5 @@
-from datetime import time, timedelta
+import time
+from datetime import timedelta
 from isocode import logger, settings
 from isocode.utils.isoutils.progress import create_progress_bar
 from pyrogram import Client

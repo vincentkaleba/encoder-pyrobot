@@ -10,6 +10,7 @@ from isocode.utils.telegram.keyboard import (
     concat_kbs,
 )
 from isocode.utils.telegram.message import (
+    edit_msg,
     send_msg,
     send_log,
 )
@@ -30,6 +31,7 @@ import time
 import psutil
 from datetime import datetime
 import sys
+from isocode.utils.isoutils.encoder import encoder_flow
 
 
 # Filtres personnalisés
@@ -248,6 +250,74 @@ async def handle_bot_commands(client: Client, message: Message):
         "leech",
         "encode_uri",
     ]:
+        if cmd == 'encode' and len(message.command) > 1:
+            arg = message.command[1]
+            if arg.startswith('http://') or arg.startswith('https://'):
+                import aiohttp
+                status = await send_msg(
+                    client,
+                    message.chat.id,
+                    stylize_value("⏳ Vérification du lien..."),
+                    reply_to=message.id,
+                )
+
+                # Vérification du type MIME via HEAD
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(arg, timeout=15) as resp:
+                            content_type = resp.headers.get('Content-Type', '')
+                            # Accepté si video/* ou application/vnd.apple.mpegurl (HLS)
+                            if not (content_type.startswith('video/') or 'mpegurl' in content_type or 'octet-stream' in content_type):
+                                await edit_msg(
+                                    client,
+                                    message.chat.id,
+                                    status.id,
+                                    stylize_value(f"❌ Type de fichier non supporté : {content_type}"),
+                                )
+                                return
+                except Exception as e:
+                    await edit_msg(
+                        client,
+                        message.chat.id,
+                        status.id,
+                        stylize_value(f"❌ Erreur lors de la vérification du lien : {e}"),
+                    )
+                    return
+
+                # Si le type est vidéo, on continue
+                await edit_msg(
+                    client,
+                    message.chat.id,
+                    status.id,
+                    stylize_value("⏳ Préparation de l'encodage..."),
+                )
+
+                try:
+                    task_id = await encoder_flow(message, status, userbot, client)
+                    if task_id:
+                        await edit_msg(
+                            client,
+                            message.chat.id,
+                            status.id,
+                            stylize_value(f"✅ Tâche en file: /status_{task_id}"),
+                        )
+                    else:
+                        await edit_msg(
+                            client,
+                            message.chat.id,
+                            status.id,
+                            stylize_value("❌ Impossible d'ajouter la tâche."),
+                        )
+                except Exception as e:
+                    logger.error(f"Erreur démarrage encode via /encode: {e}")
+                    await edit_msg(
+                        client,
+                        message.chat.id,
+                        status.id,
+                        stylize_value(f"❌ Erreur: {e}"),
+                    )
+
+                return
         command_messages = {
             "encode": BotMessage.ENCODER,
             "compress": BotMessage.COMPRESSEUR,

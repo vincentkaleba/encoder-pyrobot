@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import List, Tuple, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pydantic_core import core_schema
@@ -342,7 +342,10 @@ class ReframeOption(str, Enum):
 class PyObjectId(ObjectId):
     @classmethod
     def __get_pydantic_core_schema__(cls, _source, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(cls.validate, core_schema.str_schema())
+        # Accept either a string or an ObjectId instance as input, then run
+        # the `validate` method to normalize. Using `any_schema` avoids
+        # rejecting ObjectId instances coming from Motor/MongoDB.
+        return core_schema.no_info_after_validator_function(cls.validate, core_schema.any_schema())
 
     @classmethod
     def validate(cls, v):
@@ -475,6 +478,67 @@ class User(BaseModel):
         arbitrary_types_allowed=True
     )
 
+    @field_validator("aspect", mode="before")
+    def _coerce_aspect(cls, v):
+        """Coerce various stored representations into a boolean.
+
+        Some existing DB entries may contain strings like 'original' or
+        other non-boolean values. Convert common truthy/falsey strings
+        and numeric values to proper booleans; leave booleans unchanged.
+        """
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return False
+        if isinstance(v, (int, float)):
+            return bool(v)
+        if isinstance(v, str):
+            lv = v.strip().lower()
+            if lv in ("1", "true", "yes", "y", "t", "on"):
+                return True
+            if lv in ("0", "false", "no", "n", "f", "off"):
+                return False
+            # Unknown strings (e.g. 'original') -> treat as False by default
+            return False
+        return bool(v)
+
+    @model_validator(mode="after")
+    def _normalize_enums(cls, model):
+        """Convertit les champs d'enum qui pourraient être stockés comme
+        chaînes dans la base de données en vraies instances d'Enum afin que
+        le code puisse appeler des attributs comme `ffmpeg_name` en toute
+        sécurité.
+        """
+        enum_map = {
+            "video_codec": VideoCodec,
+            "audio_codec": AudioCodec,
+            "preset": Preset,
+            "tune": Tune,
+            "resolution": Resolution,
+            "hwaccel": HWAccel,
+            "audio_track_action": AudioTrackAction,
+            "subtitle_action": SubtitleAction,
+            "extensions": VideoFormat,
+        }
+
+        for attr, enum_cls in enum_map.items():
+            val = getattr(model, attr, None)
+            if val is None:
+                continue
+            # If already an enum instance, skip
+            if isinstance(val, enum_cls):
+                continue
+            # Try to coerce from string/value to enum
+            try:
+                # If val is a dict (rare), skip
+                if isinstance(val, str) or isinstance(val, (int, float)):
+                    setattr(model, attr, enum_cls(val))
+            except Exception:
+                # Leave unchanged on failure; ensures model still usable
+                pass
+
+        return model
+
     def update_activity(self, command: Optional[str] = None):
         self.last_activity = datetime.utcnow()
         if command:
@@ -525,7 +589,18 @@ class Database:
         self.db = self._client[database_name]
         self.users = self.db.users
         self.status = self.db.status
+        # Lancer la migration et la création d'index en tâche de fond
         asyncio.create_task(self.migrate_old_users())
+        asyncio.create_task(self._ensure_indexes())
+
+    async def _ensure_indexes(self):
+        """Create common indexes to improve query performance."""
+        try:
+            await self.users.create_index("user_id", unique=True)
+            await self.status.create_index("id", unique=True)
+        except Exception:
+            # Ne doit pas bloquer le démarrage si l'indexation échoue
+            pass
 
     async def migrate_old_users(self):
         async for old_user in self.users.find({}):
@@ -636,3 +711,11 @@ class Database:
             "resolution": user.resolution.value,
             "crf": user.crf
         }
+
+    def close(self):
+        """Close underlying motor client to release resources."""
+        try:
+            # AsyncIOMotorClient.close() is synchronous
+            self._client.close()
+        except Exception:
+            pass

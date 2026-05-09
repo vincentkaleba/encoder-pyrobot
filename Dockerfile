@@ -1,31 +1,51 @@
-# Import Ubuntu
-FROM ubuntu:20.04
+# Utiliser Ubuntu 22.04 comme base
+FROM ubuntu:22.04
 
+# Configuration de l'environnement
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Kolkata
+ENV PYTHONUNBUFFERED=1
 
-# Créer le dossier de travail
-RUN mkdir /app && chmod 777 /app
-WORKDIR /app
-
-# Copier les fichiers de l'application
-COPY . .
-
-# Installer les dépendances système
-RUN apt update && apt install -y --no-install-recommends \
-    git wget curl busybox python3 python3-pip \
-    p7zip-full p7zip-rar unzip mkvtoolnix ffmpeg \
-    build-essential python3-dev libxml2-dev libxslt1-dev \
+# Installation des dépendances système
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    gnupg \
+    ca-certificates \
+    build-essential \
+    curl \
+    git \
+    wget \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-dev \
+    python3.12-venv \
+    ffmpeg \
+    mediainfo \
+    mkvtoolnix \
+    p7zip-full \
+    p7zip-rar \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Installer les dépendances Python
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Installer pip pour Python 3.12
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
-# Rendre le script extract exécutable
-# RUN chmod +x extract
+# Création du dossier de travail
+WORKDIR /app
 
-# Exposer le port
+# Création des dossiers nécessaires avec les bons droits
+RUN mkdir -p /app/sessions /app/downloads /app/logs && chmod -R 777 /app
+
+# Installation des dépendances Python
+# On utilise --ignore-installed pour éviter les erreurs avec les paquets système comme blinker
+COPY requirements.txt .
+RUN python3.12 -m pip install --no-cache-dir --ignore-installed -r requirements.txt
+
+# Copie du reste de l'application
+COPY . .
+
+# Exposer le port si nécessaire
 EXPOSE 8080
 
 # Commande de démarrage
-CMD ["bash", "run.sh"]
+CMD ["python3.12", "-m", "isocode"]

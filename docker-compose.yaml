@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:6
+    container_name: encoder_mongo
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=mongo
+      - MONGO_INITDB_ROOT_PASSWORD=mongo
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: encoder_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - mongo
+    volumes:
+      - ./isocode/sessions:/app/sessions
+      - ./encode:/app/encode
+      - ./download:/app/download
+    # If you want to attach to logs or run interactive commands, remove detached mode when launching
+    command: ["python", "-m", "isocode"]
+
+volumes:
+  mongo_data:
