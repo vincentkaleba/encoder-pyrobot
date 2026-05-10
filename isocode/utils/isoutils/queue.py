@@ -51,12 +51,13 @@ def humanize_time(seconds: float) -> str:
 
 def humanize_time_short(seconds: float) -> str:
     """
-    Version courte pour l'affichage dans les barres de progression
+    Version courte et précise pour l'affichage (ex: 1m 57s, 2h 05m)
     """
+    seconds = int(seconds)
     if seconds < 60:
-        return f"{int(seconds)}s"
+        return f"{seconds}s"
 
-    minutes, seconds = divmod(int(seconds), 60)
+    minutes, seconds = divmod(seconds, 60)
     if minutes < 60:
         return f"{minutes}m {seconds:02d}s"
 
@@ -319,11 +320,12 @@ class EncodingQueue:
             if client and message and status_msg:
                 default_text = "🚀 **Traitement en cours...**"
 
-                # Ajouter le temps écoulé depuis le début du traitement
+                # Ajouter le temps écoulé depuis le début du traitement (encodage)
                 if task.start_time:
                     elapsed = time.time() - task.start_time
                     elapsed_str = humanize_time_short(elapsed)
-                    default_text += f" ({elapsed_str})"
+                    # Styliser explicitement pour garantir le rendu Small Caps
+                    default_text += f" ({stylize_value(elapsed_str)})"
 
                 await send_progress(
                     client=client,
@@ -388,14 +390,14 @@ class EncodingQueue:
                     # Calcul de la vitesse et du temps restant
                     speed_info = calculate_speed(current, total, self.start_time)
 
-                    # Texte détaillé avec toutes les informations
+                    # Texte détaillé avec toutes les informations humanisées
                     text = (
                         f"⬇️ **Téléchargement en cours**\n"
                         f"`{self.filename}`\n"
                         f"**Progression:** {speed_info['current_human']} / {speed_info['total_human']}\n"
                         f"**Vitesse:** {speed_info['speed_human']}\n"
-                        f"**Temps écoulé:** {speed_info['elapsed_human']}\n"
-                        f"**Temps restant:** {speed_info['remaining_human']}"
+                        f"**Temps écoulé:** {stylize_value(speed_info['elapsed_human'])}\n"
+                        f"**Temps restant:** {stylize_value(speed_info['remaining_human'])}"
                     )
 
                     await send_progress(
